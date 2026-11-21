@@ -5,6 +5,8 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
+
 const USER_XP = 950
 
 const challenges = [
@@ -91,7 +93,10 @@ function Rewards() {
                     YOUR REWARDS ZONE
                 </div>
 
-                <h1 className="text-2xl sm:text-3xl font-bold text-[#033135]">
+                <h1
+                    className="text-3xl sm:text-4xl text-[#033135]"
+                    style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                >
                     Rewards
                 </h1>
 
@@ -107,7 +112,7 @@ function Rewards() {
                         <div className="min-w-0">
                             <p className="text-xs sm:text-sm text-[#8B6D25]">XP balance</p>
                             <div className="mt-1 flex items-end gap-2">
-                                <span className="text-4xl sm:text-5xl font-bold text-[#033135]">{USER_XP}</span>
+                                <span className="text-4xl sm:text-5xl text-[#033135]" style={{ fontFamily: SERIF }}>{USER_XP}</span>
                                 <span className="mb-1.5 text-xs sm:text-sm font-semibold text-[#8B6D25]">XP</span>
                             </div>
                         </div>
@@ -444,7 +449,7 @@ function Rewards() {
                 <section className="space-y-3">
 
                     <div className="flex items-baseline justify-between gap-3">
-                        <h2 className="text-base sm:text-lg font-bold text-[#033135]">Weekly leaderboard</h2>
+                        <h2 className="text-lg sm:text-xl text-[#033135]" style={{ fontFamily: SERIF }}>Weekly leaderboard</h2>
                         <p className="flex items-center gap-1 text-[10px] sm:text-xs text-[#647572]">
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#2F7B58]" />
                             Resets in 3 days
@@ -614,7 +619,7 @@ function Rewards() {
             {activeTab === 'Reward Store' && (
                 <section>
                     <div className="mb-3 flex items-baseline justify-between gap-3">
-                        <h2 className="text-base sm:text-lg font-bold text-[#033135]">Reward store</h2>
+                        <h2 className="text-lg sm:text-xl text-[#033135]" style={{ fontFamily: SERIF }}>Reward store</h2>
                         <p className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold text-[#8B6D25]">
                             <Zap size={12} />
                             {USER_XP} XP to spend

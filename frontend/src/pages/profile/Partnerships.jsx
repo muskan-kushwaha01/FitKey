@@ -5,6 +5,8 @@ import {
     ArrowUpRight, ShieldCheck, Tag, Lock
 } from 'lucide-react'
 
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
+
 const campaigns = [
     {
         brand: 'Wellness Essentials',
@@ -68,7 +70,10 @@ function Partnerships() {
             {/* Heading */}
             <div>
                 <p className="text-sm text-[#647572]">Discover opportunities</p>
-                <h1 className="text-2xl font-bold text-[#033135]">
+                <h1
+                    className="text-3xl sm:text-4xl text-[#033135]"
+                    style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                >
                     Brand Partnerships
                 </h1>
                 <p className="mt-1 max-w-2xl text-sm text-[#647572]">
@@ -83,7 +88,10 @@ function Partnerships() {
                         <Sparkles size={14} /> FitKey Partner Network
                     </span>
 
-                    <h2 className="mt-5 text-2xl font-bold sm:text-3xl">
+                    <h2
+                        className="mt-5 text-3xl sm:text-4xl"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
                         Better wellness, together.
                     </h2>
 
@@ -132,7 +140,7 @@ function Partnerships() {
             {/* Categories */}
             <section>
                 <div className="mb-3 flex items-end justify-between gap-3">
-                    <h2 className="text-lg font-bold text-[#033135]">
+                    <h2 className="text-xl text-[#033135]" style={{ fontFamily: SERIF }}>
                         Explore categories
                     </h2>
                     <p className="text-xs text-[#647572]">Tap to filter</p>
@@ -169,7 +177,7 @@ function Partnerships() {
             <section id="campaigns">
                 <div className="mb-4 flex items-center justify-between gap-3">
                     <div>
-                        <h2 className="text-lg font-bold text-[#033135]">
+                        <h2 className="text-xl text-[#033135]" style={{ fontFamily: SERIF }}>
                             Featured campaigns
                         </h2>
                         <p className="mt-1 text-sm text-[#647572]">

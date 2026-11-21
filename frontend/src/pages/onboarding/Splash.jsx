@@ -1,7 +1,11 @@
-
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import Logo from '../../components/common/Logo'
+
+// Change these lines to reword the splash.
+const APP_NAME = 'FITKEY'
+const TAGLINE = 'Unlock a healthier you.'
+const SUBTAGLINE = 'Small habits, one step at a time.'
+
 
 function Splash() {
     const navigate = useNavigate()
@@ -9,39 +13,87 @@ function Splash() {
     useEffect(() => {
         const timer = setTimeout(() => {
             navigate('/welcome')
-        }, 2200)
+        }, 3500)
 
         return () => clearTimeout(timer)
     }, [navigate])
 
     return (
-        <div className="min-h-screen bg-[#033135] flex flex-col items-center justify-center px-6 relative overflow-hidden">
+        <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#E4F0EA] px-6">
 
-            {/* Decorative background circles */}
-            <div className="absolute -top-28 -right-24 w-80 h-80 rounded-full bg-[#324C4D] opacity-50" />
-            <div className="absolute -bottom-32 -left-24 w-80 h-80 rounded-full bg-[#C4D7D4] opacity-10" />
+            <style>{`
+                @keyframes fk-letter {
+                    from { transform: translateY(110%); }
+                    to   { transform: translateY(0); }
+                }
+                @keyframes fk-dot {
+                    0%   { transform: scale(0); }
+                    70%  { transform: scale(1.35); }
+                    100% { transform: scale(1); }
+                }
+                @keyframes fk-rule {
+                    from { transform: scaleX(0); }
+                    to   { transform: scaleX(1); }
+                }
+                @keyframes fk-fade {
+                    from { opacity: 0; }
+                    to   { opacity: 1; }
+                }
+                .fk-letter { animation: fk-letter 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+                .fk-dot    { animation: fk-dot 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+                .fk-rule   { transform-origin: left; animation: fk-rule 0.7s ease-out both; }
+                .fk-fade   { animation: fk-fade 0.8s ease-out both; }
 
-            <div className="relative z-10 flex flex-col items-center text-center">
+                @media (prefers-reduced-motion: reduce) {
+                    .fk-letter, .fk-dot, .fk-rule, .fk-fade { animation: none; }
+                }
+            `}</style>
 
-                <div className="animate-pulse">
-                    <Logo light size="lg" />
-                </div>
+            <div className="flex flex-col items-center text-center">
 
-                <p className="text-[#C4D7D4] mt-5 text-sm tracking-wide">
-                    Your health. Your journey.
+                {/* Wordmark */}
+                <h1
+                    className="flex items-end text-[4.5rem] leading-none text-[#033135] sm:text-[7.5rem]"
+                    style={{
+                        fontFamily: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif",
+                        letterSpacing: '0.01em',
+                    }}
+                    aria-label={APP_NAME}
+                >
+                    {APP_NAME.split('').map((letter, i) => (
+                        <span key={i} className="inline-block overflow-hidden pb-[0.14em]" aria-hidden="true">
+                            <span
+                                className="fk-letter inline-block"
+                                style={{ animationDelay: `${0.15 + i * 0.09}s` }}
+                            >
+                                {letter}
+                            </span>
+                        </span>
+                    ))}
+
+                    {/* the full stop is a small sun */}
+                    <span
+                        className="fk-dot mb-[0.2em] ml-[0.06em] inline-block h-[0.14em] w-[0.14em] rounded-full bg-[#E0AE3A]"
+                        style={{ animationDelay: '0.85s' }}
+                        aria-hidden="true"
+                    />
+                </h1>
+
+                <div
+                    className="fk-rule mt-5 h-px w-14 bg-[#033135]/30"
+                    style={{ animationDelay: '1s' }}
+                />
+
+                <p className="fk-fade mt-5 text-lg font-medium text-[#033135]" style={{ animationDelay: '1.15s' }}>
+                    {TAGLINE}
                 </p>
 
-                <div className="mt-16 flex gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#C4D7D4] animate-bounce" />
-                    <span className="w-2 h-2 rounded-full bg-[#C4D7D4] animate-bounce [animation-delay:150ms]" />
-                    <span className="w-2 h-2 rounded-full bg-[#C4D7D4] animate-bounce [animation-delay:300ms]" />
-                </div>
-
+                <p className="fk-fade mt-1.5 text-sm text-[#324C4D]/80" style={{ animationDelay: '1.3s' }}>
+                    {SUBTAGLINE}
+                </p>
             </div>
 
-            <p className="absolute bottom-8 text-[#C4D7D4]/70 text-xs">
-                A healthier you, one step at a time.
-            </p>
+
 
         </div>
     )

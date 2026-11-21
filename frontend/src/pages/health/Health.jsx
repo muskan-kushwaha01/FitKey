@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
+
 const initialMetrics = [
     {
         title: 'Steps',
@@ -141,7 +143,10 @@ function Health() {
                         YOUR HEALTH TRACKER
                     </div>
 
-                    <h1 className="text-2xl sm:text-3xl font-bold text-[#033135]">
+                    <h1
+                        className="text-3xl sm:text-4xl text-[#033135]"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
                         Your Health
                     </h1>
 
@@ -202,7 +207,7 @@ function Health() {
             {/* Metrics */}
             <section>
                 <div className="mb-3 sm:mb-4">
-                    <h2 className="text-base sm:text-lg font-bold text-[#033135]">
+                    <h2 className="text-lg sm:text-xl text-[#033135]" style={{ fontFamily: SERIF }}>
                         Health Metrics
                     </h2>
                     <p className="mt-1 text-[11px] sm:text-xs text-[#647572]">
@@ -239,9 +244,12 @@ function Health() {
                                     </div>
                                 </div>
 
-                                <p className="relative mt-4 break-words text-2xl font-extrabold leading-none text-[#033135] sm:mt-6 sm:text-3xl">
+                                <p
+                                    className="relative mt-4 break-words text-2xl leading-none text-[#033135] sm:mt-6 sm:text-3xl"
+                                    style={{ fontFamily: SERIF }}
+                                >
                                     {metric.value.toLocaleString()}
-                                    <span className="ml-1 text-[10px] font-semibold text-[#033135]/60 sm:text-xs">
+                                    <span className="ml-1 text-[10px] font-semibold text-[#033135]/60 sm:text-xs" style={{ fontFamily: 'inherit' }}>
                                         {metric.unit}
                                     </span>
                                 </p>

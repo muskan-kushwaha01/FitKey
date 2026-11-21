@@ -1,9 +1,10 @@
-
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Mail, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Logo from '../../components/common/Logo'
+
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 function ForgotPassword() {
     const navigate = useNavigate()
@@ -44,7 +45,10 @@ function ForgotPassword() {
                         <KeyRound size={30} className="text-[#033135]" />
                     </div>
 
-                    <h1 className="text-2xl font-bold text-[#033135]">
+                    <h1
+                        className="text-3xl sm:text-4xl leading-tight text-[#033135]"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
                         Forgot your password?
                     </h1>
 

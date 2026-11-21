@@ -13,6 +13,8 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
+
 const metrics = [
     {
         title: 'Steps',
@@ -141,7 +143,10 @@ function Home() {
                         Your wellness journey continues
                     </p>
 
-                    <h1 className="mt-1 text-2xl sm:text-3xl font-bold text-[#033135]">
+                    <h1
+                        className="mt-1 text-3xl sm:text-4xl text-[#033135]"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
                         Good morning!
                     </h1>
 
@@ -169,7 +174,7 @@ function Home() {
                         </div>
 
                         <div className="mt-3 flex items-end gap-2">
-                            <span className="text-4xl sm:text-5xl font-bold">78</span>
+                            <span className="text-4xl sm:text-5xl" style={{ fontFamily: SERIF }}>78</span>
                             <span className="mb-1.5 text-xs sm:text-sm text-[#C4D7D4]">
                                 / 100
                             </span>
@@ -426,7 +431,7 @@ function Home() {
             {/* Quick Actions */}
             <section>
                 <div className="mb-3">
-                    <h2 className="text-base sm:text-lg font-bold text-[#033135]">
+                    <h2 className="text-lg sm:text-xl text-[#033135]" style={{ fontFamily: SERIF }}>
                         Quick Actions
                     </h2>
                     <p className="mt-1 text-[10px] sm:text-xs text-[#647572]">

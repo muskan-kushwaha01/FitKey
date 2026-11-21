@@ -1,92 +1,104 @@
-
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, HeartPulse, Activity, Trophy, Users } from 'lucide-react'
-import Logo from '../../components/common/Logo'
+import { ArrowRight, HeartPulse, Activity, Trophy, Users, Flame } from 'lucide-react'
+
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
+
+const features = [
+    { icon: Activity, label: 'Track wellness', color: 'bg-[#C4D7D4]' },
+    { icon: Trophy, label: 'Earn rewards', color: 'bg-[#F8E7A5]' },
+    { icon: Users, label: 'Join community', color: 'bg-[#DCD6F7]' },
+    { icon: HeartPulse, label: 'Build healthy habits', color: 'bg-[#FFD9C7]' },
+]
 
 function Welcome() {
     const navigate = useNavigate()
 
     return (
-        <div className="min-h-screen bg-[#F8FAF7] flex flex-col">
+        <div className="flex min-h-screen flex-col bg-[#F8FAF7]">
+            <style>{`
+                @keyframes fk-up {
+                    from { opacity: 0; transform: translateY(14px); }
+                    to   { opacity: 1; transform: translateY(0); }
+                }
+                .fk-up { animation: fk-up 0.7s ease-out both; }
+                @media (prefers-reduced-motion: reduce) {
+                    .fk-up { animation: none; }
+                }
+            `}</style>
 
             {/* Navbar */}
-            <header className="px-6 md:px-12 py-5">
-                <Logo />
+            <header className="px-6 py-5 md:px-12">
+                <h2
+                    className="flex items-end text-2xl leading-none text-[#033135]"
+                    style={{ fontFamily: SERIF, letterSpacing: '0.04em' }}
+                >
+                    FITKEY
+                    <span className="mb-[0.2em] ml-[0.08em] h-[0.2em] w-[0.2em] rounded-full bg-[#E0AE3A]" />
+                </h2>
             </header>
 
             {/* Main content */}
-            <main className="flex-1 flex items-center justify-center px-6 py-10">
+            <main className="flex flex-1 items-center justify-center px-6 py-10">
 
-                <div className="max-w-6xl w-full grid md:grid-cols-2 gap-12 items-center">
+                <div className="grid w-full max-w-6xl items-center gap-12 md:grid-cols-2">
 
                     {/* Left content */}
                     <div className="max-w-lg">
 
-                        <div className="inline-flex items-center gap-2 bg-[#E4F0EA] text-[#033135] px-4 py-2 rounded-full text-sm font-medium">
+                        <div className="fk-up inline-flex items-center gap-2 rounded-full bg-[#E4F0EA] px-4 py-2 text-sm font-medium text-[#033135]">
                             <HeartPulse size={16} />
                             Your personal wellness companion
                         </div>
 
-                        <h1 className="mt-7 text-4xl md:text-6xl font-bold text-[#033135] leading-tight">
+                        <h1
+                            className="fk-up mt-7 text-5xl leading-[1.05] text-[#033135] md:text-7xl"
+                            style={{ fontFamily: SERIF, letterSpacing: '-0.02em', animationDelay: '0.1s' }}
+                        >
                             Make your
                             <span className="block text-[#648C83]">
-                                health a habit.
+                                health a habit
+                                <span className="ml-1 inline-block h-[0.12em] w-[0.12em] rounded-full bg-[#E0AE3A] align-baseline" />
                             </span>
                         </h1>
 
-                        <p className="mt-6 text-[#647572] text-base md:text-lg leading-relaxed">
+                        <p
+                            className="fk-up mt-6 text-base leading-relaxed text-[#647572] md:text-lg"
+                            style={{ animationDelay: '0.2s' }}
+                        >
                             Take charge of your wellbeing with simple health
                             tracking, meaningful challenges and a community
                             that motivates you every day.
                         </p>
 
                         {/* Features */}
-                        <div className="grid grid-cols-2 gap-4 mt-9">
+                        <div
+                            className="fk-up mt-9 grid grid-cols-2 gap-x-4 gap-y-4"
+                            style={{ animationDelay: '0.3s' }}
+                        >
+                            {features.map((feature) => {
+                                const Icon = feature.icon
 
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-[#C4D7D4] flex items-center justify-center">
-                                    <Activity size={20} className="text-[#033135]" />
-                                </div>
-                                <span className="text-sm font-medium text-[#324C4D]">
-                                    Track wellness
-                                </span>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-[#F8E7A5] flex items-center justify-center">
-                                    <Trophy size={20} className="text-[#033135]" />
-                                </div>
-                                <span className="text-sm font-medium text-[#324C4D]">
-                                    Earn rewards
-                                </span>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-[#DCD6F7] flex items-center justify-center">
-                                    <Users size={20} className="text-[#033135]" />
-                                </div>
-                                <span className="text-sm font-medium text-[#324C4D]">
-                                    Join community
-                                </span>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-[#FFD9C7] flex items-center justify-center">
-                                    <HeartPulse size={20} className="text-[#033135]" />
-                                </div>
-                                <span className="text-sm font-medium text-[#324C4D]">
-                                    Build healthy habits
-                                </span>
-                            </div>
-
+                                return (
+                                    <div key={feature.label} className="flex items-center gap-3">
+                                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${feature.color}`}>
+                                            <Icon size={20} className="text-[#033135]" />
+                                        </div>
+                                        <span className="text-sm font-medium text-[#324C4D]">
+                                            {feature.label}
+                                        </span>
+                                    </div>
+                                )
+                            })}
                         </div>
 
                         {/* Actions */}
-                        <div className="mt-10 flex flex-col sm:flex-row gap-4">
-
+                        <div
+                            className="fk-up mt-10 flex flex-col gap-4 sm:flex-row"
+                            style={{ animationDelay: '0.4s' }}
+                        >
                             <button
                                 onClick={() => navigate('/signup')}
-                                className="bg-[#033135] text-white px-8 py-4 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-[#324C4D] transition"
+                                className="flex items-center justify-center gap-2 rounded-xl bg-[#033135] px-8 py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99]"
                             >
                                 Get Started
                                 <ArrowRight size={18} />
@@ -94,50 +106,67 @@ function Welcome() {
 
                             <button
                                 onClick={() => navigate('/login')}
-                                className="border border-[#C4D7D4] text-[#033135] px-8 py-4 rounded-xl font-semibold hover:bg-[#E4F0EA] transition"
+                                className="rounded-xl border border-[#C4D7D4] px-8 py-4 font-semibold text-[#033135] transition hover:bg-[#E4F0EA]"
                             >
                                 I already have an account
                             </button>
-
                         </div>
 
-                        <p className="text-xs text-[#647572] mt-6">
+                        <p className="mt-6 text-xs text-[#647572]">
                             Small steps today. Healthier tomorrows.
                         </p>
-
                     </div>
 
-                    {/* Right illustration */}
-                    <div className="relative hidden md:flex items-center justify-center">
+                    {/* Right illustration: an arched doorway */}
+                    <div className="fk-up relative hidden items-center justify-center md:flex" style={{ animationDelay: '0.25s' }}>
 
-                        <div className="w-[420px] h-[420px] rounded-full bg-[#E4F0EA] flex items-center justify-center relative">
+                        <div className="relative h-[470px] w-[340px]">
 
-                            <div className="w-[310px] h-[310px] rounded-full bg-[#C4D7D4] flex items-center justify-center">
+                            {/* outer arch */}
+                            <div className="absolute inset-0 rounded-t-[170px] rounded-b-[2rem] bg-[#C4D7D4]" />
 
-                                <div className="w-[210px] h-[210px] rounded-[48px] bg-white shadow-xl flex items-center justify-center rotate-[-8deg]">
-                                    <HeartPulse
-                                        size={100}
-                                        strokeWidth={1.3}
-                                        className="text-[#033135]"
-                                    />
+                            {/* inner arch */}
+                            <div className="absolute inset-4 flex flex-col items-center rounded-t-[154px] rounded-b-[1.5rem] bg-[#E4F0EA]">
+
+                                {/* sun */}
+                                <span className="absolute left-1/2 top-12 h-14 w-14 -translate-x-1/2 rounded-full bg-[#F8E7A5]" />
+
+                                {/* ground arches */}
+                                <div className="absolute inset-x-0 bottom-0 flex justify-center overflow-hidden rounded-b-[1.5rem]">
+                                    <svg viewBox="0 0 300 150" className="w-full" aria-hidden="true">
+                                        <path d="M0 150 A150 150 0 0 1 300 150 Z" fill="#C4D7D4" opacity="0.7" />
+                                        <path d="M45 150 A105 105 0 0 1 255 150 Z" fill="#DCD6F7" />
+                                        <path d="M95 150 A55 55 0 0 1 205 150 Z" fill="#FFD9C7" />
+                                    </svg>
                                 </div>
 
+                                {/* heart tile */}
+                                <div className="relative mt-[11.5rem] flex h-24 w-24 -rotate-6 items-center justify-center rounded-[1.75rem] bg-white shadow-lg">
+                                    <HeartPulse size={46} strokeWidth={1.4} className="text-[#033135]" />
+                                </div>
                             </div>
 
-                            <div className="absolute top-8 right-5 bg-white rounded-2xl shadow-lg p-4 rotate-6">
-                                <Trophy className="text-[#D5A82B]" size={30} />
-                                <p className="text-xs font-semibold mt-2 text-[#033135]">
-                                    Earn rewards
-                                </p>
+                            {/* floating cards */}
+                            <div className="absolute -right-8 top-20 rotate-3 rounded-2xl bg-white p-3.5 shadow-lg">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F8E7A5]">
+                                    <Trophy size={19} className="text-[#8B6D25]" />
+                                </div>
+                                <p className="mt-2 text-xs font-semibold text-[#033135]">Earn rewards</p>
                             </div>
 
-                            <div className="absolute bottom-10 left-0 bg-white rounded-2xl shadow-lg p-4 -rotate-6">
-                                <Activity className="text-[#648C83]" size={30} />
-                                <p className="text-xs font-semibold mt-2 text-[#033135]">
-                                    Stay active
-                                </p>
+                            <div className="absolute -left-10 bottom-24 -rotate-3 rounded-2xl bg-white p-3.5 shadow-lg">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#E4F0EA]">
+                                    <Activity size={19} className="text-[#324C4D]" />
+                                </div>
+                                <p className="mt-2 text-xs font-semibold text-[#033135]">Stay active</p>
                             </div>
 
+                            <div className="absolute -right-4 bottom-10 flex items-center gap-2 rounded-full bg-[#033135] py-2 pl-2 pr-4 text-white shadow-lg">
+                                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F8E7A5]">
+                                    <Flame size={15} className="text-[#8B6D25]" />
+                                </span>
+                                <span className="text-xs font-semibold">5 day streak</span>
+                            </div>
                         </div>
 
                     </div>
@@ -147,7 +176,7 @@ function Welcome() {
             </main>
 
             {/* Footer */}
-            <footer className="text-center py-5 text-xs text-[#647572]">
+            <footer className="py-5 text-center text-xs text-[#647572]">
                 © 2026 FitKey. Your wellbeing matters.
             </footer>
 

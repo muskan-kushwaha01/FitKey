@@ -1,10 +1,11 @@
-
 import { useState } from 'react'
 import { toast } from 'react-hot-toast'
 import {
     Bell, Moon, Globe, Lock, Eye, Smartphone,
     ChevronRight, Settings as SettingsIcon, Volume2
 } from 'lucide-react'
+
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 function Settings() {
     const [settings, setSettings] = useState({
@@ -123,7 +124,12 @@ function Settings() {
             {/* Header */}
             <div>
                 <p className="text-sm text-[#647572]">Personalize your experience</p>
-                <h1 className="text-2xl font-bold text-[#033135]">Settings</h1>
+                <h1
+                    className="text-3xl sm:text-4xl text-[#033135]"
+                    style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                >
+                    Settings
+                </h1>
                 <p className="mt-1 text-sm text-[#647572]">
                     Manage your FitKey preferences and account experience.
                 </p>

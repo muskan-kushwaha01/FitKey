@@ -1,10 +1,11 @@
-
 import { useState } from 'react'
 import { toast } from 'react-hot-toast'
 import {
     UserRound, Mail, CalendarDays, Target, Activity,
     Pencil, Save, X, ShieldCheck, ChevronRight
 } from 'lucide-react'
+
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 function Profile() {
     const [isEditing, setIsEditing] = useState(false)
@@ -39,7 +40,12 @@ function Profile() {
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <p className="text-sm text-[#647572]">Your account</p>
-                    <h1 className="text-2xl font-bold text-[#033135]">My Profile</h1>
+                    <h1
+                        className="text-3xl sm:text-4xl text-[#033135]"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
+                        My Profile
+                    </h1>
                     <p className="mt-1 text-sm text-[#647572]">
                         Manage your personal details and wellness preferences.
                     </p>
@@ -57,7 +63,10 @@ function Profile() {
             {/* Profile card */}
             <div className="rounded-2xl bg-white p-6 shadow-sm">
                 <div className="flex flex-wrap items-center gap-5">
-                    <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#DCD6F7] text-3xl font-bold text-[#033135]">
+                    <div
+                        className="flex h-20 w-20 items-center justify-center rounded-full bg-[#DCD6F7] text-3xl text-[#033135]"
+                        style={{ fontFamily: SERIF }}
+                    >
                         {profile.name.charAt(0).toUpperCase()}
                     </div>
 
@@ -76,7 +85,7 @@ function Profile() {
             {/* Personal information */}
             <section className="rounded-2xl bg-white p-6 shadow-sm">
                 <div className="mb-5">
-                    <h2 className="text-lg font-bold text-[#033135]">
+                    <h2 className="text-xl text-[#033135]" style={{ fontFamily: SERIF }}>
                         Personal Information
                     </h2>
                     <p className="mt-1 text-sm text-[#647572]">
@@ -138,7 +147,7 @@ function Profile() {
             {/* Wellness preferences */}
             <section className="rounded-2xl bg-white p-6 shadow-sm">
                 <div className="mb-5">
-                    <h2 className="text-lg font-bold text-[#033135]">
+                    <h2 className="text-xl text-[#033135]" style={{ fontFamily: SERIF }}>
                         Wellness Preferences
                     </h2>
                     <p className="mt-1 text-sm text-[#647572]">
@@ -199,7 +208,7 @@ function Profile() {
 
             {/* Account settings shortcuts */}
             <section className="rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="mb-4 text-lg font-bold text-[#033135]">
+                <h2 className="mb-4 text-xl text-[#033135]" style={{ fontFamily: SERIF }}>
                     Account & Privacy
                 </h2>
 

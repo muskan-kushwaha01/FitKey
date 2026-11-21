@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react'
 import {
     NavLink,
@@ -25,6 +24,8 @@ import {
 } from 'lucide-react'
 
 import Logo from '../components/common/Logo'
+
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 const navigation = [
     { name: 'Home', path: '/home', icon: Home },
@@ -175,7 +176,7 @@ function MainLayout() {
                             <Trophy size={18} />
                             <span className="text-sm font-semibold">Your Progress</span>
                         </div>
-                        <p className="text-2xl font-bold">250 XP</p>
+                        <p className="text-3xl" style={{ fontFamily: SERIF }}>250 XP</p>
                         <p className="mt-1 text-xs text-[#E4F0EA]">
                             Keep building healthy habits!
                         </p>
@@ -268,7 +269,7 @@ function MainLayout() {
                                 <p className="text-sm font-semibold">Your Progress</p>
                             </div>
 
-                            <p className="text-2xl font-bold text-white">250 XP</p>
+                            <p className="text-3xl text-white" style={{ fontFamily: SERIF }}>250 XP</p>
 
                             <p className="mt-1 text-xs text-[#C4D7D4]">
                                 Keep building healthy habits!

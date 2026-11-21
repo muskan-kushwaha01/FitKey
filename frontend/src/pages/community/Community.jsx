@@ -5,6 +5,8 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
+
 const initialPosts = [
     {
         id: 1, type: 'article', author: 'Dr. Ananya Sharma', role: 'Nutritionist', verified: true, time: '2 hours ago',
@@ -124,7 +126,12 @@ function Community() {
             {/* Header */}
             <header className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                    <h1 className="text-2xl font-bold tracking-tight text-[#033135] sm:text-3xl">Community</h1>
+                    <h1
+                        className="text-3xl text-[#033135] sm:text-4xl"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
+                        Community
+                    </h1>
                     <p className="mt-1 text-xs text-[#647572] sm:text-sm">
                         Learn, share and grow together.
                     </p>
@@ -166,8 +173,8 @@ function Community() {
                         key={tab}
                         onClick={() => setActiveTab(tab)}
                         className={`shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition sm:text-sm ${activeTab === tab
-                                ? 'bg-[#033135] text-white'
-                                : 'bg-white text-[#647572] ring-1 ring-inset ring-[#E8EFEB] hover:bg-[#E4F0EA]'
+                            ? 'bg-[#033135] text-white'
+                            : 'bg-white text-[#647572] ring-1 ring-inset ring-[#E8EFEB] hover:bg-[#E4F0EA]'
                             }`}
                     >
                         {tab}
@@ -179,7 +186,7 @@ function Community() {
             {showReelStrip && (
                 <section>
                     <div className="mb-3 flex items-center justify-between">
-                        <h2 className="text-base font-bold text-[#033135]">Reels</h2>
+                        <h2 className="text-lg text-[#033135]" style={{ fontFamily: SERIF }}>Reels</h2>
                         <button
                             onClick={() => setActiveTab('Reels')}
                             className="text-xs font-semibold text-[#324C4D]"
@@ -209,7 +216,7 @@ function Community() {
             {feed.length > 0 && (
                 <section>
                     {activeTab === 'For You' && (
-                        <h2 className="mb-1 text-base font-bold text-[#033135]">Latest from the community</h2>
+                        <h2 className="mb-1 text-lg text-[#033135]" style={{ fontFamily: SERIF }}>Latest from the community</h2>
                     )}
 
                     <div className="divide-y divide-[#E8EFEB]">

@@ -1,4 +1,3 @@
-
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -12,9 +11,10 @@ import {
     CalendarDays,
     TrendingUp,
     ArrowRight,
-    CheckCircle2,
-    Sparkles,
+    Check,
 } from 'lucide-react'
+
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 function JourneySelection() {
     const navigate = useNavigate()
@@ -24,6 +24,7 @@ function JourneySelection() {
         {
             id: 'wellness',
             title: 'Wellness Journey',
+            tag: 'For everyday wellness',
             subtitle: 'Build healthier habits, one day at a time.',
             description:
                 'For individuals who want to improve their fitness, nutrition, sleep and overall well-being.',
@@ -39,6 +40,7 @@ function JourneySelection() {
         {
             id: 'health',
             title: 'Health Management',
+            tag: 'For ongoing care',
             subtitle: 'Stay informed and manage your health better.',
             description:
                 'For individuals managing an existing health condition, following a treatment plan or recovering.',
@@ -63,38 +65,57 @@ function JourneySelection() {
 
     return (
         <div className="min-h-screen bg-[#F8FAF7] px-4 py-8 sm:px-8">
-            <div className="mx-auto max-w-3xl">
+            <style>{`
+                @keyframes fk-up {
+                    from { opacity: 0; transform: translateY(12px); }
+                    to   { opacity: 1; transform: translateY(0); }
+                }
+                .fk-up { animation: fk-up 0.6s ease-out both; }
+                @media (prefers-reduced-motion: reduce) {
+                    .fk-up { animation: none; }
+                }
+            `}</style>
+
+            <div className="mx-auto max-w-4xl">
 
                 {/* Header */}
-                <div className="mb-10 flex items-center justify-between">
-                    <h1 className="text-2xl font-extrabold text-[#033135]">
-                        FitKey<span className="text-[#647572]">.</span>
+                <div className="mb-10 flex items-center justify-between gap-3 sm:mb-14">
+                    <h1
+                        className="flex items-end text-2xl leading-none text-[#033135]"
+                        style={{ fontFamily: SERIF, letterSpacing: '0.04em' }}
+                    >
+                        FITKEY
+                        <span className="mb-[0.2em] ml-[0.08em] h-[0.2em] w-[0.2em] rounded-full bg-[#E0AE3A]" />
                     </h1>
 
-                    <span className="rounded-full bg-[#E4F0EA] px-4 py-2 text-xs font-semibold text-[#324C4D]">
+                    <span className="text-[10px] font-semibold tracking-[0.18em] text-[#647572] sm:text-xs">
                         PERSONALIZE YOUR EXPERIENCE
                     </span>
                 </div>
 
                 {/* Heading */}
-                <div className="mb-8 text-center">
-                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#C4D7D4] text-[#033135]">
-                        <Sparkles size={27} />
-                    </div>
-
-                    <h2 className="text-3xl font-bold tracking-tight text-[#033135] sm:text-4xl">
+                <div className="fk-up mb-9 text-center sm:mb-12">
+                    <h2
+                        className="text-4xl leading-tight text-[#033135] sm:text-5xl"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
                         Choose your journey
+                        <span className="ml-1 inline-block h-[0.14em] w-[0.14em] rounded-full bg-[#E0AE3A] align-baseline" />
                     </h2>
 
-                    <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-[#647572]">
+                    <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-[#647572]">
                         Everyone has different health needs. Choose how you'd like
                         FitKey to support you on your journey.
                     </p>
                 </div>
 
                 {/* Journey Cards */}
-                <div className="space-y-5">
-                    {journeys.map((journey) => {
+                <div
+                    role="radiogroup"
+                    aria-label="Choose your journey"
+                    className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5"
+                >
+                    {journeys.map((journey, index) => {
                         const Icon = journey.icon
                         const isSelected = selected === journey.id
 
@@ -102,51 +123,63 @@ function JourneySelection() {
                             <button
                                 key={journey.id}
                                 type="button"
+                                role="radio"
+                                aria-checked={isSelected}
                                 onClick={() => setSelected(journey.id)}
-                                className={`w-full rounded-3xl border-2 p-5 text-left transition-all sm:p-7 ${isSelected
-                                        ? 'border-[#033135] bg-white shadow-md'
-                                        : 'border-transparent bg-white shadow-sm hover:border-[#C4D7D4]'
+                                style={{ animationDelay: `${0.1 + index * 0.1}s` }}
+                                className={`fk-up flex h-full flex-col rounded-3xl border-2 p-5 text-left transition-all duration-300 sm:p-7 ${isSelected
+                                    ? `border-[#033135] ${journey.color} shadow-md`
+                                    : 'border-[#E8EFEB] bg-white hover:-translate-y-0.5 hover:border-[#C4D7D4]'
                                     }`}
                             >
+                                {/* top row */}
                                 <div className="flex items-start justify-between gap-3">
-                                    <div className="flex items-start gap-4">
-                                        <div className={`rounded-2xl p-3 ${journey.color}`}>
-                                            <Icon size={27} className="text-[#033135]" />
-                                        </div>
-
-                                        <div>
-                                            <h3 className="text-lg font-bold text-[#033135] sm:text-xl">
-                                                {journey.title}
-                                            </h3>
-                                            <p className="mt-1 text-sm font-medium text-[#324C4D]">
-                                                {journey.subtitle}
-                                            </p>
-                                        </div>
+                                    <div className={`flex h-14 w-14 items-center justify-center rounded-2xl transition-colors ${isSelected ? 'bg-white/80' : journey.color
+                                        }`}>
+                                        <Icon size={26} className="text-[#033135]" />
                                     </div>
 
-                                    <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${isSelected
-                                            ? 'border-[#033135] bg-[#033135] text-white'
-                                            : 'border-[#C4D7D4]'
+                                    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition ${isSelected
+                                        ? 'border-[#033135] bg-[#033135] text-white'
+                                        : 'border-[#C4D7D4] bg-white'
                                         }`}>
-                                        {isSelected && <CheckCircle2 size={17} />}
+                                        {isSelected && <Check size={15} strokeWidth={3} />}
                                     </div>
                                 </div>
 
-                                <p className="mt-5 text-sm leading-6 text-[#647572]">
+                                {/* text */}
+                                <p className="mt-6 text-[10px] font-bold uppercase tracking-[0.16em] text-[#647572] sm:text-[11px]">
+                                    {journey.tag}
+                                </p>
+
+                                <h3
+                                    className="mt-1.5 text-2xl leading-snug text-[#033135]"
+                                    style={{ fontFamily: SERIF }}
+                                >
+                                    {journey.title}
+                                </h3>
+
+                                <p className="mt-1.5 text-sm font-medium text-[#324C4D]">
+                                    {journey.subtitle}
+                                </p>
+
+                                <p className="mt-4 text-sm leading-6 text-[#647572]">
                                     {journey.description}
                                 </p>
 
-                                <div className="mt-5 grid grid-cols-2 gap-3">
+                                {/* features */}
+                                <div className="mt-auto grid grid-cols-2 gap-2 pt-6">
                                     {journey.features.map((feature) => {
                                         const FeatureIcon = feature.icon
 
                                         return (
                                             <div
                                                 key={feature.label}
-                                                className="flex items-center gap-2 rounded-xl bg-[#F8FAF7] p-3"
+                                                className={`flex items-center gap-2 rounded-xl px-3 py-2.5 transition-colors ${isSelected ? 'bg-white/70' : 'bg-[#F8FAF7]'
+                                                    }`}
                                             >
-                                                <FeatureIcon size={17} className="shrink-0 text-[#324C4D]" />
-                                                <span className="text-xs font-medium text-[#324C4D]">
+                                                <FeatureIcon size={15} className="shrink-0 text-[#324C4D]" />
+                                                <span className="text-[11px] font-medium leading-tight text-[#324C4D] sm:text-xs">
                                                     {feature.label}
                                                 </span>
                                             </div>
@@ -159,16 +192,18 @@ function JourneySelection() {
                 </div>
 
                 {/* Continue */}
-                <button
-                    onClick={handleContinue}
-                    className="mt-8 flex w-full items-center justify-center gap-3 rounded-2xl bg-[#033135] px-6 py-4 font-semibold text-white transition hover:bg-[#324C4D]"
-                >
-                    Continue <ArrowRight size={19} />
-                </button>
+                <div className="mx-auto mt-8 max-w-md sm:mt-10">
+                    <button
+                        onClick={handleContinue}
+                        className="flex w-full items-center justify-center gap-3 rounded-2xl bg-[#033135] px-6 py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99]"
+                    >
+                        Continue <ArrowRight size={19} />
+                    </button>
 
-                <p className="mt-5 text-center text-xs text-[#647572]">
-                    You can change your journey later from your profile settings.
-                </p>
+                    <p className="mt-5 text-center text-xs text-[#647572]">
+                        You can change your journey later from your profile settings.
+                    </p>
+                </div>
             </div>
         </div>
     )
