@@ -1,46 +1,34 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
-    Trophy, Flame, Footprints, Droplets, Moon, Gift, Crown,
-    Zap, CheckCircle2, Lock, Gem, Ticket, Sparkles, Medal, ChevronUp, ChevronDown, Minus,
+    Trophy, Flame, Gift, Crown,
+    Zap, CheckCircle2, Lock, Sparkles, Medal, ChevronUp, ChevronDown, Minus,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+import {
+    getAvailableXP,
+    getLifetimeXP,
+    calculateLevel,
+    formatXP,
+} from '../../services/xpService'
+import {
+    evaluateDailyChallenges,
+    getTotalCompletedMissionsCount,
+} from '../../services/challengeService'
+import { evaluateBadges } from '../../services/badgeService'
+import {
+    getRewardStoreItems,
+    redeemReward,
+} from '../../services/rewardService'
+import { getCurrentStreak } from '../../services/healthService'
+
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
-const USER_XP = 950
-
-const challenges = [
-    { title: 'Hydration Hero', description: 'Complete your daily water goal.', detail: '1.5 / 2.5 L', reward: 50, progress: 60, icon: Droplets, color: 'bg-[#DCD6F7]', iconColor: 'text-[#6B5B95]' },
-    { title: 'Step Master', description: 'Reach 8,000 steps today.', detail: '6,240 / 8,000 steps', reward: 75, progress: 78, icon: Footprints, color: 'bg-[#E4F0EA]', iconColor: 'text-[#324C4D]' },
-    { title: 'Sleep Champion', description: 'Complete your sleep goal.', detail: '8 / 8 hrs', reward: 100, progress: 100, icon: Moon, color: 'bg-[#FFD9C7]', iconColor: 'text-[#A45E45]' },
-]
-
-const achievements = [
-    { title: 'First Step', description: 'Complete your first wellness activity.', icon: Footprints, unlocked: true, color: 'bg-[#E4F0EA]', iconColor: 'text-[#324C4D]', rarity: 'Common', progress: 1, goal: 1, unit: 'activity' },
-    { title: 'Hydration Hero', description: 'Complete your water goal.', icon: Droplets, unlocked: true, color: 'bg-[#DCD6F7]', iconColor: 'text-[#6B5B95]', rarity: 'Rare', progress: 1, goal: 1, unit: 'goal' },
-    { title: '7 Day Streak', description: 'Stay consistent for seven days.', icon: Flame, unlocked: false, color: 'bg-[#FFD9C7]', iconColor: 'text-[#A45E45]', rarity: 'Epic', progress: 5, goal: 7, unit: 'days' },
-    { title: 'Wellness Champion', description: 'Complete ten challenges.', icon: Crown, unlocked: false, color: 'bg-[#F8E7A5]', iconColor: 'text-[#8B6D25]', rarity: 'Legendary', progress: 7, goal: 10, unit: 'challenges' },
-]
-
-const leaderboard = [
-    { name: 'Aarav', xp: 1250, rank: 1, initials: 'A', trend: 'same', streak: 12 },
-    { name: 'Priya', xp: 1120, rank: 2, initials: 'P', trend: 'up', streak: 9 },
-    { name: 'You', xp: 950, rank: 3, initials: 'U', current: true, trend: 'up', streak: 5 },
-    { name: 'Riya', xp: 870, rank: 4, initials: 'R', trend: 'down', streak: 7 },
-    { name: 'Kabir', xp: 760, rank: 5, initials: 'K', trend: 'same', streak: 3 },
-]
-
-const rewardItems = [
-    { title: 'Fitness Store Voucher', description: 'Save on selected fitness products.', points: 500, icon: Ticket, color: 'bg-[#FFD9C7]', iconColor: 'text-[#A45E45]', category: 'Shopping' },
-    { title: 'Wellness Starter Kit', description: 'A curated collection of wellness essentials.', points: 800, icon: Gift, color: 'bg-[#DCD6F7]', iconColor: 'text-[#6B5B95]', category: 'Exclusive' },
-    { title: 'FitKey Elite Badge', description: 'Show off your wellness achievements.', points: 300, icon: Gem, color: 'bg-[#F8E7A5]', iconColor: 'text-[#8B6D25]', category: 'Digital' },
-]
-
-const summary = [
-    { label: 'Missions done', value: '12' },
-    { label: 'Badges earned', value: '8' },
-    { label: 'Day streak', value: '5' },
-    { label: 'Lifetime XP', value: '2.4K' },
+const DEMO_LEADERBOARD_PLAYERS = [
+    { name: 'Aarav', xp: 1250, initials: 'A', streak: 12 },
+    { name: 'Priya', xp: 1120, initials: 'P', streak: 9 },
+    { name: 'Riya', xp: 870, initials: 'R', streak: 7 },
+    { name: 'Kabir', xp: 760, initials: 'K', streak: 3 },
 ]
 
 const tabs = ['Missions', 'Badges', 'Leaderboard', 'Reward Store']
@@ -56,32 +44,129 @@ const badgeFilters = ['All', 'Unlocked', 'Locked']
 
 function Rewards() {
     const [activeTab, setActiveTab] = useState('Missions')
-    const [claimed, setClaimed] = useState([])
     const [badgeFilter, setBadgeFilter] = useState('All')
 
+    const [wallet, setWallet] = useState({
+        availableXP: 0,
+        lifetimeXP: 0,
+        levelInfo: {
+            level: 1,
+            nextLevel: 2,
+            xpToNext: 200,
+            segmentFilledCount: 0,
+        },
+    })
+
+    const [challengeData, setChallengeData] = useState({
+        challenges: [],
+        summary: {
+            doneCount: 0,
+            totalCount: 4,
+            xpEarnedToday: 0,
+            xpAvailableToday: 275,
+            bonusXP: 50,
+            bonusClaimed: false,
+            allDone: false,
+        },
+    })
+
+    const [badgeData, setBadgeData] = useState({
+        badges: [],
+        summary: {
+            unlockedCount: 0,
+            totalBadges: 0,
+            percentComplete: 0,
+            badgesLeft: 0,
+            nextBadge: null,
+        },
+    })
+
+    const [storeItems, setStoreItems] = useState([])
+    const [streak, setStreak] = useState(1)
+    const [totalMissionsDone, setTotalMissionsDone] = useState(0)
+
+    const refreshData = useCallback(() => {
+        // Evaluate daily challenges and badges against live health data
+        const evalChallenges = evaluateDailyChallenges()
+        const evalBadges = evaluateBadges()
+        const available = getAvailableXP()
+        const lifetime = getLifetimeXP()
+        const lvlInfo = calculateLevel(lifetime)
+        const items = getRewardStoreItems()
+        const currentStreak = getCurrentStreak()
+        const totalCompleted = getTotalCompletedMissionsCount()
+
+        setWallet({
+            availableXP: available,
+            lifetimeXP: lifetime,
+            levelInfo: lvlInfo,
+        })
+        setChallengeData(evalChallenges)
+        setBadgeData(evalBadges)
+        setStoreItems(items)
+        setStreak(currentStreak)
+        setTotalMissionsDone(totalCompleted)
+    }, [])
+
+    useEffect(() => {
+        refreshData()
+    }, [refreshData])
+
     const handleReward = (item) => {
-        if (claimed.includes(item.title)) {
-            toast('You have already claimed this reward.')
-            return
+        const result = redeemReward(item.id)
+        if (result.success) {
+            toast.success(result.message)
+            refreshData()
+        } else {
+            toast.error(result.message)
         }
-        toast.success('Reward redemption will be connected later!')
-        setClaimed((current) => [...current, item.title])
     }
 
-    const gapToNext = leaderboard[1].xp - USER_XP
+    // Dynamic Leaderboard: combine demo players with live user XP
+    const userXP = wallet.availableXP
+    const combinedLeaderboard = [
+        ...DEMO_LEADERBOARD_PLAYERS,
+        {
+            name: 'You',
+            xp: userXP,
+            initials: 'U',
+            current: true,
+            streak: streak || 1,
+        },
+    ].sort((a, b) => b.xp - a.xp)
 
-    const doneCount = challenges.filter((c) => c.progress === 100).length
-    const xpEarnedToday = challenges.filter((c) => c.progress === 100).reduce((sum, c) => sum + c.reward, 0)
-    const xpAvailableToday = challenges.reduce((sum, c) => sum + c.reward, 0)
-    const BONUS_XP = 50
+    const rankedLeaderboard = combinedLeaderboard.map((p, idx) => ({
+        ...p,
+        rank: idx + 1,
+        trend: idx === 0 ? 'up' : idx <= 2 ? 'up' : idx === 3 ? 'same' : 'down',
+    }))
 
-    const nextBadge = [...achievements]
-        .filter((a) => !a.unlocked)
-        .sort((a, b) => b.progress / b.goal - a.progress / a.goal)[0]
-    const visibleBadges = achievements.filter((a) =>
+    const you = rankedLeaderboard.find((p) => p.current) || { rank: 3, xp: userXP }
+    const playerAhead = you.rank > 1 ? rankedLeaderboard[you.rank - 2] : null
+    const gapToNext = playerAhead ? Math.max(0, playerAhead.xp - you.xp) : 0
+    const maxXp = Math.max(...rankedLeaderboard.map((p) => p.xp), 1)
+
+    // Podium top 3 (second place left, first place middle, third place right)
+    const podiumPlayers = [
+        rankedLeaderboard[1] || rankedLeaderboard[0],
+        rankedLeaderboard[0],
+        rankedLeaderboard[2] || rankedLeaderboard[0],
+    ]
+
+    const { summary: challengeSummary, challenges } = challengeData
+    const { summary: badgeSummary, badges } = badgeData
+    const nextBadge = badgeSummary.nextBadge
+
+    const visibleBadges = badges.filter((a) =>
         badgeFilter === 'All' ? true : badgeFilter === 'Unlocked' ? a.unlocked : !a.unlocked
     )
-    const maxXp = Math.max(...leaderboard.map((p) => p.xp))
+
+    const summaryStats = [
+        { label: 'Missions done', value: String(totalMissionsDone) },
+        { label: 'Badges earned', value: String(badgeSummary.unlockedCount) },
+        { label: 'Day streak', value: String(streak) },
+        { label: 'Lifetime XP', value: formatXP(wallet.lifetimeXP) },
+    ]
 
     return (
         <div className="space-y-5 sm:space-y-7">
@@ -112,14 +197,16 @@ function Rewards() {
                         <div className="min-w-0">
                             <p className="text-xs sm:text-sm text-[#8B6D25]">XP balance</p>
                             <div className="mt-1 flex items-end gap-2">
-                                <span className="text-4xl sm:text-5xl text-[#033135]" style={{ fontFamily: SERIF }}>{USER_XP}</span>
+                                <span className="text-4xl sm:text-5xl text-[#033135]" style={{ fontFamily: SERIF }}>
+                                    {wallet.availableXP}
+                                </span>
                                 <span className="mb-1.5 text-xs sm:text-sm font-semibold text-[#8B6D25]">XP</span>
                             </div>
                         </div>
 
                         <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#033135] sm:text-sm">
                             <Crown size={15} className="text-[#8B6D25]" />
-                            Level 4
+                            Level {wallet.levelInfo.level}
                         </span>
                     </div>
 
@@ -127,18 +214,21 @@ function Rewards() {
                         {Array.from({ length: 10 }).map((_, i) => (
                             <div
                                 key={i}
-                                className={`h-2 flex-1 rounded-full ${i < 8 ? 'bg-[#033135]' : 'bg-white/70'}`}
+                                className={`h-2 flex-1 rounded-full ${i < wallet.levelInfo.segmentFilledCount ? 'bg-[#033135]' : 'bg-white/70'
+                                    }`}
                             />
                         ))}
                     </div>
 
                     <p className="mt-2 text-[10px] sm:text-xs text-[#8B6D25]">
-                        250 XP to reach Level 5
+                        {wallet.levelInfo.xpToNext > 0
+                            ? `${wallet.levelInfo.xpToNext} XP to reach Level ${wallet.levelInfo.nextLevel}`
+                            : 'Maximum level reached!'}
                     </p>
                 </div>
 
                 <div className="grid grid-cols-4 divide-x divide-[#033135]/10 border-t border-[#033135]/10 bg-white/40">
-                    {summary.map((item) => (
+                    {summaryStats.map((item) => (
                         <div key={item.label} className="px-1 py-3 text-center sm:py-4">
                             <p className="text-base sm:text-xl font-bold text-[#033135]">{item.value}</p>
                             <p className="mt-0.5 text-[9px] sm:text-xs leading-tight text-[#647572]">{item.label}</p>
@@ -174,34 +264,43 @@ function Rewards() {
                             <div className="min-w-0">
                                 <p className="text-[11px] font-semibold text-[#324C4D] sm:text-xs">Today's missions</p>
                                 <h2 className="text-2xl font-black text-[#033135] sm:text-3xl">
-                                    {doneCount}<span className="text-base font-bold text-[#647572]"> / {challenges.length} done</span>
+                                    {challengeSummary.doneCount}
+                                    <span className="text-base font-bold text-[#647572]"> / {challengeSummary.totalCount} done</span>
                                 </h2>
                                 <p className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold text-[#8B6D25] sm:text-xs">
                                     <Zap size={12} fill="currentColor" />
-                                    {xpEarnedToday} of {xpAvailableToday} XP earned
+                                    {challengeSummary.xpEarnedToday} of {challengeSummary.xpAvailableToday} XP earned
                                 </p>
                             </div>
 
                             <div className="flex shrink-0 gap-1.5">
-                                {challenges.map((c) => (
-                                    <div
-                                        key={c.title}
-                                        className={`flex h-9 w-9 items-center justify-center rounded-full sm:h-10 sm:w-10 ${c.progress === 100
-                                            ? 'bg-[#2F7B58] text-white'
-                                            : 'border-2 border-dashed border-[#324C4D]/30 bg-white/60 text-[#647572]'
-                                            }`}
-                                    >
-                                        {c.progress === 100 ? <CheckCircle2 size={17} /> : <c.icon size={16} />}
-                                    </div>
-                                ))}
+                                {challenges.map((c) => {
+                                    const IconComponent = c.icon
+                                    return (
+                                        <div
+                                            key={c.id || c.title}
+                                            className={`flex h-9 w-9 items-center justify-center rounded-full sm:h-10 sm:w-10 ${c.progress === 100
+                                                ? 'bg-[#2F7B58] text-white'
+                                                : 'border-2 border-dashed border-[#324C4D]/30 bg-white/60 text-[#647572]'
+                                                }`}
+                                        >
+                                            {c.progress === 100 ? (
+                                                <CheckCircle2 size={17} />
+                                            ) : (
+                                                <IconComponent size={16} />
+                                            )}
+                                        </div>
+                                    )
+                                })}
                             </div>
                         </div>
 
                         <div className="relative mt-4 flex gap-1.5">
                             {challenges.map((c) => (
-                                <div key={c.title} className="h-2 flex-1 overflow-hidden rounded-full bg-white/70">
+                                <div key={c.id || c.title} className="h-2 flex-1 overflow-hidden rounded-full bg-white/70">
                                     <div
-                                        className={`h-full rounded-full transition-all duration-700 ${c.progress === 100 ? 'bg-[#2F7B58]' : 'bg-[#324C4D]'}`}
+                                        className={`h-full rounded-full transition-all duration-700 ${c.progress === 100 ? 'bg-[#2F7B58]' : 'bg-[#324C4D]'
+                                            }`}
                                         style={{ width: `${c.progress}%` }}
                                     />
                                 </div>
@@ -219,7 +318,7 @@ function Rewards() {
                             const circ = 2 * Math.PI * r
                             return (
                                 <div
-                                    key={c.title}
+                                    key={c.id || c.title}
                                     className={`flex items-center gap-3 rounded-2xl border p-3 transition sm:gap-4 sm:rounded-3xl sm:p-4 ${done
                                         ? 'border-[#2F7B58]/20 bg-[#E4F0EA]/60'
                                         : 'border-[#E8EFEB] bg-white hover:shadow-md'
@@ -230,8 +329,13 @@ function Rewards() {
                                         <svg width={size} height={size} className="-rotate-90">
                                             <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#F0F3F0" strokeWidth="5" />
                                             <circle
-                                                cx={size / 2} cy={size / 2} r={r} fill="none"
-                                                stroke={done ? '#2F7B58' : '#324C4D'} strokeWidth="5" strokeLinecap="round"
+                                                cx={size / 2}
+                                                cy={size / 2}
+                                                r={r}
+                                                fill="none"
+                                                stroke={done ? '#2F7B58' : '#324C4D'}
+                                                strokeWidth="5"
+                                                strokeLinecap="round"
                                                 strokeDasharray={circ}
                                                 strokeDashoffset={circ * (1 - c.progress / 100)}
                                                 className="transition-all duration-700"
@@ -261,10 +365,12 @@ function Rewards() {
 
                                     {/* reward */}
                                     <div className="flex shrink-0 flex-col items-end gap-1.5">
-                                        <span className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-black ${done
-                                            ? 'bg-[#2F7B58] text-white'
-                                            : 'bg-[#F8E7A5]/70 text-[#8B6D25]'
-                                            }`}>
+                                        <span
+                                            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-black ${done
+                                                ? 'bg-[#2F7B58] text-white'
+                                                : 'bg-[#F8E7A5]/70 text-[#8B6D25]'
+                                                }`}
+                                        >
                                             <Zap size={12} fill="currentColor" />
                                             {done ? 'Earned ' : '+'}{c.reward}
                                         </span>
@@ -285,12 +391,26 @@ function Rewards() {
                         <div className="min-w-0 flex-1">
                             <p className="text-sm font-extrabold text-[#033135]">Daily bonus</p>
                             <p className="text-[11px] text-[#647572] sm:text-xs">
-                                Finish all {challenges.length} missions to earn an extra +{BONUS_XP} XP.
+                                Finish all {challengeSummary.totalCount} missions to earn an extra +{challengeSummary.bonusXP} XP.
                             </p>
                         </div>
-                        <span className="flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-black text-[#8B6D25]">
-                            <Lock size={11} />
-                            +{BONUS_XP}
+                        <span
+                            className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-black ${challengeSummary.bonusClaimed
+                                ? 'bg-[#2F7B58] text-white'
+                                : 'bg-white text-[#8B6D25]'
+                                }`}
+                        >
+                            {challengeSummary.bonusClaimed ? (
+                                <>
+                                    <CheckCircle2 size={12} />
+                                    +{challengeSummary.bonusXP}
+                                </>
+                            ) : (
+                                <>
+                                    <Lock size={11} />
+                                    +{challengeSummary.bonusXP}
+                                </>
+                            )}
                         </span>
                     </div>
                 </section>
@@ -308,9 +428,15 @@ function Rewards() {
                                 <svg width="72" height="72" className="-rotate-90">
                                     <circle cx="36" cy="36" r="30" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="7" />
                                     <circle
-                                        cx="36" cy="36" r="30" fill="none" stroke="#6B5B95" strokeWidth="7" strokeLinecap="round"
+                                        cx="36"
+                                        cy="36"
+                                        r="30"
+                                        fill="none"
+                                        stroke="#6B5B95"
+                                        strokeWidth="7"
+                                        strokeLinecap="round"
                                         strokeDasharray={2 * Math.PI * 30}
-                                        strokeDashoffset={2 * Math.PI * 30 * (1 - 0.4)}
+                                        strokeDashoffset={2 * Math.PI * 30 * (1 - badgeSummary.percentComplete / 100)}
                                         className="transition-all duration-700"
                                     />
                                 </svg>
@@ -322,9 +448,11 @@ function Rewards() {
                             <div className="min-w-0 flex-1">
                                 <p className="text-[11px] font-semibold text-[#625780] sm:text-xs">Your collection</p>
                                 <h2 className="text-xl font-black text-[#033135] sm:text-2xl">
-                                    8 <span className="text-sm font-bold text-[#625780]">of 20 badges</span>
+                                    {badgeSummary.unlockedCount} <span className="text-sm font-bold text-[#625780]">of {badgeSummary.totalBadges} badges</span>
                                 </h2>
-                                <p className="mt-0.5 text-[11px] text-[#625780] sm:text-xs">40% complete · 12 more to go</p>
+                                <p className="mt-0.5 text-[11px] text-[#625780] sm:text-xs">
+                                    {badgeSummary.percentComplete}% complete · {badgeSummary.badgesLeft} more to go
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -380,7 +508,7 @@ function Rewards() {
                             const pct = Math.round((a.progress / a.goal) * 100)
                             return (
                                 <div
-                                    key={a.title}
+                                    key={a.id || a.title}
                                     className={`relative flex min-w-0 flex-col items-center overflow-hidden rounded-2xl border p-4 text-center transition sm:rounded-3xl ${a.unlocked
                                         ? 'border-[#E8EFEB] bg-white shadow-sm hover:-translate-y-0.5 hover:shadow-md'
                                         : 'border-dashed border-[#DCE6E1] bg-[#F7F9F8]'
@@ -390,7 +518,7 @@ function Rewards() {
                                         <span className={`pointer-events-none absolute -top-8 left-1/2 h-24 w-24 -translate-x-1/2 rounded-full opacity-60 blur-2xl ${a.color}`} />
                                     )}
 
-                                    <span className={`relative rounded-full px-2.5 py-0.5 text-[10px] font-bold ${rarityStyle[a.rarity]}`}>
+                                    <span className={`relative rounded-full px-2.5 py-0.5 text-[10px] font-bold ${rarityStyle[a.rarity] || 'bg-gray-100 text-gray-800'}`}>
                                         {a.rarity}
                                     </span>
 
@@ -462,18 +590,26 @@ function Rewards() {
                         <div className="relative flex items-center gap-3 sm:gap-4">
                             <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl bg-[#033135] text-white sm:h-16 sm:w-16">
                                 <span className="text-[9px] font-semibold uppercase tracking-wider text-[#F8E7A5]">Rank</span>
-                                <span className="text-2xl font-black leading-none">#3</span>
+                                <span className="text-2xl font-black leading-none">#{you.rank}</span>
                             </div>
 
                             <div className="min-w-0 flex-1">
-                                <p className="text-sm font-extrabold text-[#033135] sm:text-base">You're on the podium!</p>
+                                <p className="text-sm font-extrabold text-[#033135] sm:text-base">
+                                    {you.rank === 1 ? "You're leading the board!" : you.rank <= 3 ? "You're on the podium!" : "Keep climbing!"}
+                                </p>
                                 <p className="mt-0.5 text-[11px] text-[#755347] sm:text-xs">
-                                    Only <span className="font-black text-[#033135]">{gapToNext} XP</span> to overtake {leaderboard[1].name}
+                                    {playerAhead ? (
+                                        <>
+                                            Only <span className="font-black text-[#033135]">{gapToNext} XP</span> to overtake {playerAhead.name}
+                                        </>
+                                    ) : (
+                                        'Top rank! Defend your lead by completing missions.'
+                                    )}
                                 </p>
                                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/60">
                                     <div
                                         className="h-full rounded-full bg-[#033135] transition-all duration-700"
-                                        style={{ width: `${Math.round((USER_XP / leaderboard[1].xp) * 100)}%` }}
+                                        style={{ width: `${Math.round((userXP / maxXp) * 100)}%` }}
                                     />
                                 </div>
                             </div>
@@ -481,9 +617,9 @@ function Rewards() {
                             <div className="shrink-0 text-right">
                                 <p className="flex items-center justify-end gap-0.5 text-lg font-black text-[#033135] sm:text-xl">
                                     <Zap size={15} fill="currentColor" className="text-[#A47A27]" />
-                                    {USER_XP}
+                                    {userXP}
                                 </p>
-                                <p className="text-[10px] font-semibold text-[#755347]">XP this week</p>
+                                <p className="text-[10px] font-semibold text-[#755347]">XP available</p>
                             </div>
                         </div>
                     </div>
@@ -502,7 +638,7 @@ function Rewards() {
                         </div>
 
                         <div className="relative mt-6 flex items-end justify-center gap-2 sm:gap-4">
-                            {[leaderboard[1], leaderboard[0], leaderboard[2]].map((p) => {
+                            {podiumPlayers.map((p) => {
                                 const first = p.rank === 1
                                 const bg = first ? '#F8E7A5' : p.rank === 2 ? '#DCD6F7' : '#FFD9C7'
                                 return (
@@ -544,11 +680,11 @@ function Rewards() {
                     <div className="rounded-2xl border border-[#E8EFEB] bg-white p-2 sm:rounded-3xl sm:p-4">
                         <div className="mb-1 flex items-center justify-between px-2 pt-1">
                             <h3 className="text-sm font-extrabold text-[#033135]">Full ranking</h3>
-                            <span className="text-[11px] text-[#647572]">Top 5 this week</span>
+                            <span className="text-[11px] text-[#647572]">Top {rankedLeaderboard.length} this week</span>
                         </div>
 
                         <div className="space-y-1.5">
-                            {leaderboard.map((p) => {
+                            {rankedLeaderboard.map((p) => {
                                 const rankBg = p.rank === 1 ? 'bg-[#F8E7A5]' : p.rank === 2 ? 'bg-[#DCD6F7]' : p.rank === 3 ? 'bg-[#FFD9C7]' : 'bg-[#F0F3F0]'
                                 return (
                                     <div
@@ -585,7 +721,8 @@ function Rewards() {
                                             </div>
                                             <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#F0F3F0]">
                                                 <div
-                                                    className={`h-full rounded-full transition-all duration-700 ${p.current ? 'bg-[#A47A27]' : 'bg-[#324C4D]'}`}
+                                                    className={`h-full rounded-full transition-all duration-700 ${p.current ? 'bg-[#A47A27]' : 'bg-[#324C4D]'
+                                                        }`}
                                                     style={{ width: `${(p.xp / maxXp) * 100}%` }}
                                                 />
                                             </div>
@@ -595,8 +732,14 @@ function Rewards() {
                                             <p className="text-sm font-black text-[#033135]">
                                                 {p.xp.toLocaleString()} <span className="text-[10px] font-semibold text-[#647572]">XP</span>
                                             </p>
-                                            <p className={`mt-0.5 flex items-center justify-end text-[10px] font-bold ${p.trend === 'up' ? 'text-[#2F7B58]' : p.trend === 'down' ? 'text-[#C0563B]' : 'text-[#9AA6A0]'
-                                                }`}>
+                                            <p
+                                                className={`mt-0.5 flex items-center justify-end text-[10px] font-bold ${p.trend === 'up'
+                                                    ? 'text-[#2F7B58]'
+                                                    : p.trend === 'down'
+                                                        ? 'text-[#C0563B]'
+                                                        : 'text-[#9AA6A0]'
+                                                    }`}
+                                            >
                                                 {p.trend === 'up' && <ChevronUp size={13} />}
                                                 {p.trend === 'down' && <ChevronDown size={13} />}
                                                 {p.trend === 'same' && <Minus size={12} />}
@@ -622,19 +765,17 @@ function Rewards() {
                         <h2 className="text-lg sm:text-xl text-[#033135]" style={{ fontFamily: SERIF }}>Reward store</h2>
                         <p className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold text-[#8B6D25]">
                             <Zap size={12} />
-                            {USER_XP} XP to spend
+                            {wallet.availableXP} XP to spend
                         </p>
                     </div>
 
                     <div className="space-y-3">
-                        {rewardItems.map((item) => {
+                        {storeItems.map((item) => {
                             const Icon = item.icon
-                            const isClaimed = claimed.includes(item.title)
-                            const canAfford = USER_XP >= item.points
-                            const pct = Math.min(100, Math.round((USER_XP / item.points) * 100))
+                            const { isClaimed, canAfford, progressPercent, xpNeeded } = item
 
                             return (
-                                <div key={item.title} className="flex bg-white border border-[#E8EFEB] rounded-3xl overflow-hidden">
+                                <div key={item.id} className="flex bg-white border border-[#E8EFEB] rounded-3xl overflow-hidden">
                                     {/* ticket stub */}
                                     <div
                                         className={`w-20 sm:w-32 shrink-0 flex flex-col items-center justify-center gap-2 px-1 border-r-2 border-dashed border-white ${item.color}`}
@@ -658,11 +799,11 @@ function Rewards() {
                                                 <div className="h-1.5 w-20 sm:w-32 rounded-full bg-[#F0F3F0] overflow-hidden">
                                                     <div
                                                         className={`h-full rounded-full ${canAfford ? 'bg-[#2F7B58]' : 'bg-[#C49A42]'}`}
-                                                        style={{ width: `${pct}%` }}
+                                                        style={{ width: `${progressPercent}%` }}
                                                     />
                                                 </div>
                                                 <span className="text-[11px] font-semibold text-[#647572]">
-                                                    {canAfford ? 'Ready to unlock' : `${item.points - USER_XP} XP to go`}
+                                                    {canAfford ? 'Ready to unlock' : `${xpNeeded} XP to go`}
                                                 </span>
                                             </div>
                                         </div>

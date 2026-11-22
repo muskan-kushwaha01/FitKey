@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, HeartPulse, Activity, Trophy, Users, Flame } from 'lucide-react'
+import { ArrowRight, HeartPulse, Activity, Trophy, Users, Flame, Stethoscope, UserCheck } from 'lucide-react'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -27,7 +27,7 @@ function Welcome() {
             `}</style>
 
             {/* Navbar */}
-            <header className="px-6 py-5 md:px-12">
+            <header className="flex items-center justify-between px-6 py-5 md:px-12">
                 <h2
                     className="flex items-end text-2xl leading-none text-[#033135]"
                     style={{ fontFamily: SERIF, letterSpacing: '0.04em' }}
@@ -35,6 +35,14 @@ function Welcome() {
                     FITKEY
                     <span className="mb-[0.2em] ml-[0.08em] h-[0.2em] w-[0.2em] rounded-full bg-[#E0AE3A]" />
                 </h2>
+
+                <button
+                    onClick={() => navigate('/professional/login')}
+                    className="flex items-center gap-1.5 rounded-full border border-[#DCE7E3] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#033135] transition hover:border-[#648C83] hover:bg-[#E4F0EA]"
+                >
+                    <Stethoscope size={14} className="text-[#648C83]" />
+                    Professional Portal
+                </button>
             </header>
 
             {/* Main content */}
@@ -91,25 +99,44 @@ function Welcome() {
                             })}
                         </div>
 
-                        {/* Actions */}
+                        {/* Actions: 2 primary buttons for User vs Professional */}
                         <div
-                            className="fk-up mt-10 flex flex-col gap-4 sm:flex-row"
+                            className="fk-up mt-10 space-y-3"
                             style={{ animationDelay: '0.4s' }}
                         >
-                            <button
-                                onClick={() => navigate('/signup')}
-                                className="flex items-center justify-center gap-2 rounded-xl bg-[#033135] px-8 py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99]"
-                            >
-                                Get Started
-                                <ArrowRight size={18} />
-                            </button>
+                            <div className="flex flex-col gap-3 sm:flex-row">
+                                <button
+                                    onClick={() => navigate('/signup')}
+                                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#033135] px-6 py-4 font-semibold text-white shadow-sm transition hover:bg-[#324C4D] active:scale-[0.99]"
+                                >
+                                    <UserCheck size={18} />
+                                    Continue as a User
+                                    <ArrowRight size={16} />
+                                </button>
 
-                            <button
-                                onClick={() => navigate('/login')}
-                                className="rounded-xl border border-[#C4D7D4] px-8 py-4 font-semibold text-[#033135] transition hover:bg-[#E4F0EA]"
-                            >
-                                I already have an account
-                            </button>
+                                <button
+                                    onClick={() => navigate('/professional/login')}
+                                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border-2 border-[#033135] bg-white px-6 py-4 font-semibold text-[#033135] shadow-sm transition hover:bg-[#E4F0EA] active:scale-[0.99]"
+                                >
+                                    <Stethoscope size={18} className="text-[#648C83]" />
+                                    Continue as a Professional
+                                </button>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-[#647572]">
+                                <span>
+                                    Already have a user account?{' '}
+                                    <button
+                                        onClick={() => navigate('/login')}
+                                        className="font-semibold text-[#033135] underline hover:text-[#648C83]"
+                                    >
+                                        Log in
+                                    </button>
+                                </span>
+                                <span className="text-[11px] text-[#8B6D25] font-medium">
+                                    ★ FitKey Professional Experience
+                                </span>
+                            </div>
                         </div>
 
                         <p className="mt-6 text-xs text-[#647572]">

@@ -56,11 +56,8 @@ function JourneySelection() {
     ]
 
     const handleContinue = () => {
-        if (selected === 'wellness') {
-            navigate('/wellness-setup')
-        } else {
-            navigate('/health-management-setup')
-        }
+        // Both journeys go through the same health profile setup
+        navigate('/wellness-setup', { state: { journey: selected } })
     }
 
     return (
