@@ -17,6 +17,10 @@ import {
     MapPin,
     Award,
     Briefcase,
+    IndianRupee,
+    CreditCard,
+    Lock,
+    Copy,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { getCurrentProfessional } from '../../services/professional/professionalAuthService.js'
@@ -27,6 +31,14 @@ import {
     simulateDocumentUpload,
     isOnboardingCompleted,
 } from '../../services/professional/professionalProfileService.js'
+import {
+    saveConsultationSettings,
+    DEFAULT_SCHEDULE,
+    DAYS_OF_WEEK,
+    DURATION_OPTIONS,
+    BUFFER_OPTIONS,
+    MIN_CONSULTATION_FEE,
+} from '../../services/professional/professionalConsultationService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -46,6 +58,10 @@ const AVATAR_OPTIONS = [
     'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=150&auto=format&fit=crop&q=80',
     'https://images.unsplash.com/photo-1594824813512-850d9953a8f4?w=150&auto=format&fit=crop&q=80',
     'https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150&auto=format&fit=crop&q=80',
+]
+
+const TIME_OPTIONS = [
+    '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'
 ]
 
 const inputClass =
@@ -93,7 +109,22 @@ function ProfessionalOnboarding() {
         state: '',
         clinicPhotoUrl: '',
 
-        // Step 4: Documents
+        // Step 4: Consultations Opt-in & Preferences
+        offerConsultations: 'yes', // 'yes' or 'no'
+        consultationFee: 500,
+        durationMinutes: 20,
+        bufferMinutes: 5,
+        consultationPhone: '',
+        phoneConsent: true,
+        schedule: DEFAULT_SCHEDULE,
+        payoutMethod: 'upi',
+        payoutUpi: '',
+        payoutBankHolder: '',
+        payoutBankName: '',
+        payoutBankAccount: '',
+        payoutBankIfsc: '',
+
+        // Step 5: Documents
         documents: [],
     })
 
@@ -106,7 +137,6 @@ function ProfessionalOnboarding() {
             return
         }
 
-        // If already completed, redirect to home
         if (isOnboardingCompleted(prof.id)) {
             navigate('/professional/home')
             return
@@ -114,13 +144,13 @@ function ProfessionalOnboarding() {
 
         setProfessional(prof)
 
-        // Check draft
         const draft = getDraftOnboarding(prof.id)
         if (draft) {
             setFormData((prev) => ({
                 ...prev,
                 ...draft,
                 fullName: draft.fullName || prof.name || '',
+                consultationPhone: draft.consultationPhone || draft.phone || '',
             }))
         } else {
             setFormData((prev) => ({
@@ -131,14 +161,71 @@ function ProfessionalOnboarding() {
     }, [navigate])
 
     const handleInputChange = (e) => {
-        const { name, value } = e.target
-        const updated = { ...formData, [name]: value }
+        const { name, value, type, checked } = e.target
+        const val = type === 'checkbox' ? checked : value
+        const updated = { ...formData, [name]: val }
         setFormData(updated)
 
-        // Auto save draft
         if (professional) {
             saveDraftOnboarding(professional.id, updated)
         }
+    }
+
+    const handleToggleScheduleDay = (dayKey) => {
+        setFormData((prev) => {
+            const currentSchedule = prev.schedule || DEFAULT_SCHEDULE
+            const updated = {
+                ...prev,
+                schedule: {
+                    ...currentSchedule,
+                    [dayKey]: {
+                        ...currentSchedule[dayKey],
+                        enabled: !currentSchedule[dayKey].enabled,
+                    },
+                },
+            }
+            if (professional) saveDraftOnboarding(professional.id, updated)
+            return updated
+        })
+    }
+
+    const handleScheduleTimeChange = (dayKey, field, val) => {
+        setFormData((prev) => {
+            const currentSchedule = prev.schedule || DEFAULT_SCHEDULE
+            const updated = {
+                ...prev,
+                schedule: {
+                    ...currentSchedule,
+                    [dayKey]: {
+                        ...currentSchedule[dayKey],
+                        [field]: val,
+                    },
+                },
+            }
+            if (professional) saveDraftOnboarding(professional.id, updated)
+            return updated
+        })
+    }
+
+    const handleApplyFirstDayHoursToAll = () => {
+        const sched = formData.schedule || DEFAULT_SCHEDULE
+        const firstDay = DAYS_OF_WEEK.find((d) => sched[d.key]?.enabled)?.key || 'monday'
+        const template = sched[firstDay]
+        if (!template) return
+
+        const updatedSched = {}
+        DAYS_OF_WEEK.forEach((d) => {
+            updatedSched[d.key] = {
+                ...sched[d.key],
+                startTime: template.startTime,
+                endTime: template.endTime,
+            }
+        })
+
+        const updated = { ...formData, schedule: updatedSched }
+        setFormData(updated)
+        if (professional) saveDraftOnboarding(professional.id, updated)
+        toast.success(`Copied hours (${template.startTime} - ${template.endTime}) to all days`)
     }
 
     // Add simulated document upload
@@ -180,6 +267,10 @@ function ProfessionalOnboarding() {
                 toast.error('Please add a short professional bio.')
                 return false
             }
+            // Auto fill consultation phone if empty
+            if (!formData.consultationPhone) {
+                setFormData((prev) => ({ ...prev, consultationPhone: formData.phone }))
+            }
             return true
         }
 
@@ -216,6 +307,38 @@ function ProfessionalOnboarding() {
         }
 
         if (step === 4) {
+            // Consultation Step
+            if (formData.offerConsultations === 'no') {
+                return true // Skipped
+            }
+
+            if (Number(formData.consultationFee) < MIN_CONSULTATION_FEE) {
+                toast.error(`Minimum consultation fee is ₹${MIN_CONSULTATION_FEE}.`)
+                return false
+            }
+
+            const phone = formData.consultationPhone || formData.phone
+            if (!phone.trim()) {
+                toast.error('Please provide a contact phone number for receiving consultation calls.')
+                return false
+            }
+
+            if (!formData.phoneConsent) {
+                toast.error('Please accept the consultation calling agreement checkbox.')
+                return false
+            }
+
+            if (formData.payoutMethod === 'upi') {
+                if (formData.payoutUpi.trim() && !formData.payoutUpi.includes('@')) {
+                    toast.error('Please enter a valid UPI ID (e.g. name@upi).')
+                    return false
+                }
+            }
+
+            return true
+        }
+
+        if (step === 5) {
             if (formData.documents.length === 0) {
                 toast.error('Please upload at least one qualification or registration document.')
                 return false
@@ -244,7 +367,25 @@ function ProfessionalOnboarding() {
         if (!professional) return
         const res = completeOnboarding(professional.id, formData)
         if (res.success) {
-            setCurrentStep(5) // Completion screen
+            // Save consultation settings persistently
+            saveConsultationSettings(professional.id, {
+                isEnabled: formData.offerConsultations === 'yes',
+                consultationFee: Number(formData.consultationFee) || 500,
+                durationMinutes: Number(formData.durationMinutes) || 20,
+                bufferMinutes: Number(formData.bufferMinutes) || 5,
+                contactPhone: formData.consultationPhone || formData.phone,
+                phoneConsent: formData.phoneConsent,
+                schedule: formData.schedule || DEFAULT_SCHEDULE,
+                payoutDetails: {
+                    method: formData.payoutMethod || 'upi',
+                    upiId: formData.payoutUpi || '',
+                    accountHolderName: formData.payoutBankHolder || '',
+                    bankName: formData.payoutBankName || '',
+                    accountNumber: formData.payoutBankAccount || '',
+                    ifscCode: formData.payoutBankIfsc || '',
+                },
+            })
+            setCurrentStep(6) // Completion screen
         } else {
             toast.error(res.error || 'Failed to complete onboarding.')
         }
@@ -254,7 +395,8 @@ function ProfessionalOnboarding() {
         { id: 1, label: 'Personal', icon: User },
         { id: 2, label: 'Professional', icon: Stethoscope },
         { id: 3, label: 'Workplace', icon: Building2 },
-        { id: 4, label: 'Verification', icon: ShieldCheck },
+        { id: 4, label: 'Consultations', icon: Phone },
+        { id: 5, label: 'Verification', icon: ShieldCheck },
     ]
 
     return (
@@ -265,19 +407,19 @@ function ProfessionalOnboarding() {
                     <Wordmark />
 
                     <div className="flex items-center gap-2 text-xs font-semibold text-[#647572]">
-                        <span>Step {Math.min(currentStep, 4)} of 4</span>
+                        <span>Step {Math.min(currentStep, 5)} of 5</span>
                         <div className="h-2 w-20 overflow-hidden rounded-full bg-[#E8EFEB]">
                             <div
                                 className="h-full bg-[#033135] transition-all duration-300"
-                                style={{ width: `${Math.min(100, (currentStep / 4) * 100)}%` }}
+                                style={{ width: `${Math.min(100, (currentStep / 5) * 100)}%` }}
                             />
                         </div>
                     </div>
                 </div>
             </header>
 
-            {/* Stepper Navigation (hidden on step 5) */}
-            {currentStep < 5 && (
+            {/* Stepper Navigation (hidden on step 6) */}
+            {currentStep < 6 && (
                 <div className="border-b border-[#E8EFEB] bg-[#FAFBF9] px-4 py-3">
                     <div className="mx-auto flex max-w-3xl items-center justify-between gap-1 sm:gap-2">
                         {steps.map((s) => {
@@ -321,7 +463,7 @@ function ProfessionalOnboarding() {
                         <section className="space-y-6">
                             <div>
                                 <span className="text-xs font-bold uppercase tracking-wider text-[#648C83]">
-                                    Section 01 / 04
+                                    Section 01 / 05
                                 </span>
                                 <h2
                                     className="mt-1 text-2xl font-bold text-[#033135] sm:text-3xl"
@@ -367,7 +509,7 @@ function ProfessionalOnboarding() {
                                         />
                                     </div>
                                     <p className="mt-1 text-[11px] text-[#9AA6A0]">
-                                        Used for credential verification and direct practice notifications.
+                                        Used for credential verification and practice notifications.
                                     </p>
                                 </div>
 
@@ -449,7 +591,7 @@ function ProfessionalOnboarding() {
                         <section className="space-y-6">
                             <div>
                                 <span className="text-xs font-bold uppercase tracking-wider text-[#648C83]">
-                                    Section 02 / 04
+                                    Section 02 / 05
                                 </span>
                                 <h2
                                     className="mt-1 text-2xl font-bold text-[#033135] sm:text-3xl"
@@ -458,15 +600,15 @@ function ProfessionalOnboarding() {
                                     Professional Credentials
                                 </h2>
                                 <p className="mt-1 text-sm text-[#647572]">
-                                    Your healthcare domain, qualifications, and licensing details.
+                                    Your professional license, degree qualifications, and areas of expertise.
                                 </p>
                             </div>
 
                             <div className="rounded-2xl border border-[#E8EFEB] bg-white p-5 space-y-4 sm:p-6">
-                                {/* Category Dropdown */}
+                                {/* Profession Category */}
                                 <div>
                                     <label className="mb-1 block text-xs font-semibold text-[#324C4D]">
-                                        Profession / Category *
+                                        Primary Category / Profession *
                                     </label>
                                     <select
                                         name="profession"
@@ -474,10 +616,10 @@ function ProfessionalOnboarding() {
                                         onChange={handleInputChange}
                                         className={inputClass}
                                     >
-                                        <option value="">Select your professional field...</option>
-                                        {PROFESSIONS.map((prof) => (
-                                            <option key={prof} value={prof}>
-                                                {prof}
+                                        <option value="">Select your profession</option>
+                                        {PROFESSIONS.map((p) => (
+                                            <option key={p} value={p}>
+                                                {p}
                                             </option>
                                         ))}
                                     </select>
@@ -486,14 +628,14 @@ function ProfessionalOnboarding() {
                                 {/* Specialization */}
                                 <div>
                                     <label className="mb-1 block text-xs font-semibold text-[#324C4D]">
-                                        Specialization / Clinical Focus *
+                                        Clinical Specialization / Focus Area *
                                     </label>
                                     <input
                                         type="text"
                                         name="specialization"
                                         value={formData.specialization}
                                         onChange={handleInputChange}
-                                        placeholder="e.g. Preventive Cardiology, Sports Nutrition, Post-Operative Rehab"
+                                        placeholder="e.g. Sports Physiotherapy, Pediatric Nutrition, Diabetes Reversal"
                                         className={inputClass}
                                     />
                                 </div>
@@ -563,7 +705,7 @@ function ProfessionalOnboarding() {
                         <section className="space-y-6">
                             <div>
                                 <span className="text-xs font-bold uppercase tracking-wider text-[#648C83]">
-                                    Section 03 / 04
+                                    Section 03 / 05
                                 </span>
                                 <h2
                                     className="mt-1 text-2xl font-bold text-[#033135] sm:text-3xl"
@@ -662,12 +804,379 @@ function ProfessionalOnboarding() {
                         </section>
                     )}
 
-                    {/* STEP 4: Verification & Documents */}
+                    {/* STEP 4: Consultation Preferences (New Module) */}
                     {currentStep === 4 && (
                         <section className="space-y-6">
                             <div>
                                 <span className="text-xs font-bold uppercase tracking-wider text-[#648C83]">
-                                    Section 04 / 04
+                                    Section 04 / 05
+                                </span>
+                                <h2
+                                    className="mt-1 text-2xl font-bold text-[#033135] sm:text-3xl"
+                                    style={{ fontFamily: SERIF }}
+                                >
+                                    Offer Consultations on FitKey
+                                </h2>
+                                <p className="mt-1 text-sm text-[#647572]">
+                                    Would you like to offer 1-on-1 scheduled phone consultations to FitKey members?
+                                </p>
+                            </div>
+
+                            {/* Opt-in choice cards */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, offerConsultations: 'yes' })}
+                                    className={`flex flex-col items-start rounded-2xl border p-5 text-left transition ${formData.offerConsultations === 'yes'
+                                        ? 'border-[#033135] bg-[#E4F0EA]/50 ring-2 ring-[#033135]/20 shadow-xs'
+                                        : 'border-[#E8EFEB] bg-white hover:bg-[#FAFBF9]'
+                                        }`}
+                                >
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#033135] text-white">
+                                        <Phone size={18} />
+                                    </div>
+                                    <h3 className="mt-3 text-sm font-bold text-[#033135]">
+                                        Yes, I want to offer consultations
+                                    </h3>
+                                    <p className="mt-1 text-xs text-[#647572] leading-relaxed">
+                                        Set your consultation fee, working hours, and conduct private phone consultations with verified members.
+                                    </p>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, offerConsultations: 'no' })}
+                                    className={`flex flex-col items-start rounded-2xl border p-5 text-left transition ${formData.offerConsultations === 'no'
+                                        ? 'border-[#033135] bg-[#FAFBF9] ring-2 ring-[#033135]/20 shadow-xs'
+                                        : 'border-[#E8EFEB] bg-white hover:bg-[#FAFBF9]'
+                                        }`}
+                                >
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#E8EFEB] text-[#647572]">
+                                        <Clock size={18} />
+                                    </div>
+                                    <h3 className="mt-3 text-sm font-bold text-[#033135]">
+                                        Not right now
+                                    </h3>
+                                    <p className="mt-1 text-xs text-[#647572] leading-relaxed">
+                                        Skip consultation setup for now. You can activate consultations anytime from your profile or sidebar.
+                                    </p>
+                                </button>
+                            </div>
+
+                            {formData.offerConsultations === 'no' ? (
+                                <div className="rounded-2xl border border-[#DCE7E3] bg-white p-6 text-center text-xs text-[#647572]">
+                                    <p className="font-semibold text-[#033135]">
+                                        Consultations disabled for now.
+                                    </p>
+                                    <p className="mt-1">
+                                        Click "Continue" to proceed to Credential Verification and finish your registration.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="space-y-6">
+                                    {/* 1. Format banner */}
+                                    <div className="rounded-2xl border border-[#DCE7E3] bg-[#E4F0EA]/40 p-4 text-xs text-[#033135] flex items-start gap-3">
+                                        <Phone size={18} className="shrink-0 text-[#2F7B58] mt-0.5" />
+                                        <div>
+                                            <p className="font-bold">Supported Format: Scheduled Phone Consultations</p>
+                                            <p className="text-[#324C4D] mt-0.5 leading-relaxed">
+                                                FitKey automatically bridges consultation calls between you and the patient via an automated private telephony gateway. Neither side sees the other’s personal phone number.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* 2. Fee Setting */}
+                                    <div className="rounded-2xl border border-[#E8EFEB] bg-white p-5 space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-xs font-bold uppercase tracking-wider text-[#324C4D]">
+                                                Consultation Fee (INR) *
+                                            </label>
+                                            <span className="text-[11px] font-semibold text-[#2F7B58]">
+                                                Min: ₹{MIN_CONSULTATION_FEE}
+                                            </span>
+                                        </div>
+
+                                        <div className="relative">
+                                            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 font-bold text-[#647572]">
+                                                ₹
+                                            </span>
+                                            <input
+                                                type="number"
+                                                min={MIN_CONSULTATION_FEE}
+                                                step="50"
+                                                name="consultationFee"
+                                                value={formData.consultationFee}
+                                                onChange={handleInputChange}
+                                                className={`${inputClass} pl-9 font-bold text-base text-[#033135]`}
+                                            />
+                                        </div>
+
+                                        <p className="text-[11px] text-[#647572]">
+                                            ℹ️ FitKey platform fee: <strong>10%</strong>. For a ₹{formData.consultationFee} fee, you take home <strong>₹{Math.round(formData.consultationFee * 0.9)}</strong> net.
+                                        </p>
+                                    </div>
+
+                                    {/* 3. Duration & Buffer */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4">
+                                            <label className="block text-xs font-bold text-[#324C4D] mb-2">
+                                                Slot Duration
+                                            </label>
+                                            <div className="grid grid-cols-3 gap-1.5">
+                                                {DURATION_OPTIONS.map((mins) => (
+                                                    <button
+                                                        key={mins}
+                                                        type="button"
+                                                        onClick={() => setFormData({ ...formData, durationMinutes: mins })}
+                                                        className={`rounded-xl border py-2.5 text-xs font-bold transition ${Number(formData.durationMinutes) === mins
+                                                            ? 'border-[#033135] bg-[#E4F0EA] text-[#033135]'
+                                                            : 'border-[#E8EFEB] bg-white text-[#647572] hover:bg-[#FAFBF9]'
+                                                            }`}
+                                                    >
+                                                        {mins} mins
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4">
+                                            <label className="block text-xs font-bold text-[#324C4D] mb-2">
+                                                Buffer Time Between Calls
+                                            </label>
+                                            <div className="grid grid-cols-3 gap-1.5">
+                                                {BUFFER_OPTIONS.map((mins) => (
+                                                    <button
+                                                        key={mins}
+                                                        type="button"
+                                                        onClick={() => setFormData({ ...formData, bufferMinutes: mins })}
+                                                        className={`rounded-xl border py-2.5 text-xs font-bold transition ${Number(formData.bufferMinutes) === mins
+                                                            ? 'border-[#033135] bg-[#E4F0EA] text-[#033135]'
+                                                            : 'border-[#E8EFEB] bg-white text-[#647572] hover:bg-[#FAFBF9]'
+                                                            }`}
+                                                    >
+                                                        {mins === 0 ? 'No buffer' : `${mins} mins`}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 4. Working Days & Daily Hours */}
+                                    <div className="rounded-2xl border border-[#E8EFEB] bg-white p-5 space-y-4">
+                                        <div className="flex items-center justify-between border-b border-[#E8EFEB] pb-3">
+                                            <div>
+                                                <h4 className="text-xs font-bold uppercase tracking-wider text-[#324C4D]">
+                                                    Available Days & Calling Hours
+                                                </h4>
+                                                <p className="text-[11px] text-[#647572]">
+                                                    Select days you are available to receive calls.
+                                                </p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleApplyFirstDayHoursToAll}
+                                                className="flex items-center gap-1 rounded-lg border border-[#DCE7E3] px-2.5 py-1 text-[11px] font-semibold text-[#033135] hover:bg-[#E4F0EA]"
+                                            >
+                                                <Copy size={12} />
+                                                Apply Hours to All
+                                            </button>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            {DAYS_OF_WEEK.map((d) => {
+                                                const daySched = formData.schedule?.[d.key] || {
+                                                    enabled: false,
+                                                    startTime: '09:00',
+                                                    endTime: '17:00',
+                                                }
+                                                return (
+                                                    <div
+                                                        key={d.key}
+                                                        className="flex items-center justify-between rounded-xl bg-[#FAFBF9] p-2.5 text-xs"
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={daySched.enabled}
+                                                                onChange={() => handleToggleScheduleDay(d.key)}
+                                                                className="h-4 w-4 rounded accent-[#033135]"
+                                                            />
+                                                            <span className="font-semibold text-[#033135] w-24">
+                                                                {d.label}
+                                                            </span>
+                                                        </div>
+
+                                                        {daySched.enabled ? (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <select
+                                                                    value={daySched.startTime}
+                                                                    onChange={(e) => handleScheduleTimeChange(d.key, 'startTime', e.target.value)}
+                                                                    className="rounded-lg border border-[#DCE7E3] bg-white px-2 py-1 text-[11px] font-semibold text-[#033135]"
+                                                                >
+                                                                    {TIME_OPTIONS.map((t) => (
+                                                                        <option key={t} value={t}>{t}</option>
+                                                                    ))}
+                                                                </select>
+                                                                <span className="text-[#9AA6A0]">-</span>
+                                                                <select
+                                                                    value={daySched.endTime}
+                                                                    onChange={(e) => handleScheduleTimeChange(d.key, 'endTime', e.target.value)}
+                                                                    className="rounded-lg border border-[#DCE7E3] bg-white px-2 py-1 text-[11px] font-semibold text-[#033135]"
+                                                                >
+                                                                    {TIME_OPTIONS.map((t) => (
+                                                                        <option key={t} value={t}>{t}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-[11px] text-[#9AA6A0] italic">
+                                                                Off day
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* 5. Contact Phone & Consent */}
+                                    <div className="rounded-2xl border border-[#E8EFEB] bg-white p-5 space-y-4">
+                                        <div>
+                                            <label className="block text-xs font-semibold text-[#324C4D] mb-1">
+                                                Phone Number for Consultations *
+                                            </label>
+                                            <div className="relative">
+                                                <Phone size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9AA6A0]" />
+                                                <input
+                                                    type="tel"
+                                                    name="consultationPhone"
+                                                    value={formData.consultationPhone || formData.phone}
+                                                    onChange={handleInputChange}
+                                                    placeholder="+91 98765 43210"
+                                                    className={`${inputClass} pl-10`}
+                                                />
+                                            </div>
+                                            <p className="mt-1 text-[11px] text-[#647572]">
+                                                🔒 Privacy note: This number is used strictly for bridging calls and is <strong>never displayed publicly</strong> to patients.
+                                            </p>
+                                        </div>
+
+                                        <label className="flex items-start gap-2.5 cursor-pointer text-xs text-[#324C4D] pt-1">
+                                            <input
+                                                type="checkbox"
+                                                name="phoneConsent"
+                                                checked={formData.phoneConsent}
+                                                onChange={handleInputChange}
+                                                className="mt-0.5 h-4 w-4 rounded accent-[#033135]"
+                                            />
+                                            <span>
+                                                I agree to receive consultation calls on this number during my specified available hours.
+                                            </span>
+                                        </label>
+                                    </div>
+
+                                    {/* 6. Payout Information */}
+                                    <div className="rounded-2xl border border-[#E8EFEB] bg-white p-5 space-y-4">
+                                        <div className="flex items-center justify-between border-b border-[#E8EFEB] pb-3">
+                                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#324C4D]">
+                                                Payout & Disbursement Setup
+                                            </h4>
+                                            <span className="flex items-center gap-1 text-[10px] font-bold text-[#2F7B58]">
+                                                <Lock size={11} /> 100% Safe
+                                            </span>
+                                        </div>
+
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData({ ...formData, payoutMethod: 'upi' })}
+                                                className={`flex-1 rounded-xl border py-2 text-xs font-bold transition ${formData.payoutMethod === 'upi'
+                                                    ? 'border-[#033135] bg-[#E4F0EA] text-[#033135]'
+                                                    : 'border-[#E8EFEB] text-[#647572]'
+                                                    }`}
+                                            >
+                                                UPI ID
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData({ ...formData, payoutMethod: 'bank' })}
+                                                className={`flex-1 rounded-xl border py-2 text-xs font-bold transition ${formData.payoutMethod === 'bank'
+                                                    ? 'border-[#033135] bg-[#E4F0EA] text-[#033135]'
+                                                    : 'border-[#E8EFEB] text-[#647572]'
+                                                    }`}
+                                            >
+                                                Bank Account
+                                            </button>
+                                        </div>
+
+                                        {formData.payoutMethod === 'upi' ? (
+                                            <div>
+                                                <label className="block text-xs font-semibold text-[#324C4D] mb-1">
+                                                    UPI ID (e.g. name@upi)
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    name="payoutUpi"
+                                                    value={formData.payoutUpi}
+                                                    onChange={handleInputChange}
+                                                    placeholder="doctor@oksbi or 9876543210@paytm"
+                                                    className={inputClass}
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <input
+                                                    type="text"
+                                                    name="payoutBankHolder"
+                                                    value={formData.payoutBankHolder}
+                                                    onChange={handleInputChange}
+                                                    placeholder="Account Holder Name"
+                                                    className={inputClass}
+                                                />
+                                                <input
+                                                    type="text"
+                                                    name="payoutBankName"
+                                                    value={formData.payoutBankName}
+                                                    onChange={handleInputChange}
+                                                    placeholder="Bank Name (e.g. HDFC Bank)"
+                                                    className={inputClass}
+                                                />
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <input
+                                                        type="text"
+                                                        name="payoutBankAccount"
+                                                        value={formData.payoutBankAccount}
+                                                        onChange={handleInputChange}
+                                                        placeholder="Account Number"
+                                                        className={inputClass}
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        name="payoutBankIfsc"
+                                                        value={formData.payoutBankIfsc}
+                                                        onChange={handleInputChange}
+                                                        placeholder="IFSC Code"
+                                                        className={inputClass}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <p className="text-[11px] text-[#647572] bg-[#FAFBF9] p-3 rounded-xl border border-[#E8EFEB]">
+                                            🛡️ <strong>Safety Guarantee:</strong> FitKey never asks for or stores your UPI PIN, online passwords, or debit card CVV. Details are used solely for depositing your consultation earnings.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+                        </section>
+                    )}
+
+                    {/* STEP 5: Verification & Documents */}
+                    {currentStep === 5 && (
+                        <section className="space-y-6">
+                            <div>
+                                <span className="text-xs font-bold uppercase tracking-wider text-[#648C83]">
+                                    Section 05 / 05
                                 </span>
                                 <h2
                                     className="mt-1 text-2xl font-bold text-[#033135] sm:text-3xl"
@@ -783,8 +1292,8 @@ function ProfessionalOnboarding() {
                         </section>
                     )}
 
-                    {/* STEP 5: Completion Screen */}
-                    {currentStep === 5 && (
+                    {/* STEP 6: Completion Screen */}
+                    {currentStep === 6 && (
                         <section className="space-y-6 text-center">
                             <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-[#E4F0EA] text-[#033135] shadow-md">
                                 <Sparkles size={36} className="text-[#8B6D25]" />
@@ -801,7 +1310,7 @@ function ProfessionalOnboarding() {
                                     Application Submitted!
                                 </h1>
                                 <p className="mx-auto mt-2 max-w-md text-sm text-[#647572]">
-                                    Thank you, <strong>{formData.fullName}</strong>. Your professional credentials and workplace details have been securely recorded.
+                                    Thank you, <strong>{formData.fullName}</strong>. Your professional credentials, workplace, and consultation preferences have been securely recorded.
                                 </p>
                             </div>
 
@@ -826,6 +1335,12 @@ function ProfessionalOnboarding() {
                                         <span className="font-bold text-[#033135]">{formData.specialization}</span>
                                     </div>
                                     <div className="flex justify-between">
+                                        <span className="text-[#647572]">Consultations:</span>
+                                        <span className={`font-bold ${formData.offerConsultations === 'yes' ? 'text-[#2F7B58]' : 'text-[#647572]'}`}>
+                                            {formData.offerConsultations === 'yes' ? `Enabled (₹${formData.consultationFee}/slot)` : 'Not active'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between">
                                         <span className="text-[#647572]">Workplace:</span>
                                         <span className="font-bold text-[#033135]">{formData.workplaceName}</span>
                                     </div>
@@ -840,7 +1355,7 @@ function ProfessionalOnboarding() {
                                 </div>
                             </div>
 
-                            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                            <div className="flex items-center justify-center pt-2">
                                 <button
                                     type="button"
                                     onClick={() => navigate('/professional/home')}
@@ -849,20 +1364,12 @@ function ProfessionalOnboarding() {
                                     <span>Enter Professional Home</span>
                                     <ArrowRight size={18} />
                                 </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => navigate('/home')}
-                                    className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-[#C4D7D4] bg-white px-6 py-4 font-semibold text-[#033135] shadow-sm transition hover:bg-[#E4F0EA] active:scale-[0.99]"
-                                >
-                                    <span>Go to Main App Home</span>
-                                </button>
                             </div>
                         </section>
                     )}
 
-                    {/* Step Navigation Controls (steps 1–4) */}
-                    {currentStep < 5 && (
+                    {/* Step Navigation Controls (steps 1–5) */}
+                    {currentStep < 6 && (
                         <div className="mt-8 flex items-center justify-between border-t border-[#E8EFEB] pt-5">
                             <button
                                 type="button"
@@ -875,7 +1382,7 @@ function ProfessionalOnboarding() {
                                 Back
                             </button>
 
-                            {currentStep < 4 ? (
+                            {currentStep < 5 ? (
                                 <button
                                     type="button"
                                     onClick={handleNext}

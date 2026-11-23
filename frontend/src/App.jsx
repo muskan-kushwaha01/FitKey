@@ -15,6 +15,8 @@ import Home from './pages/home/Home'
 import Health from './pages/health/Health'
 import Rewards from './pages/rewards/Rewards'
 import Community from './pages/community/Community'
+import ConsultationsDiscovery from './pages/consultations/ConsultationsDiscovery'
+import UserConsultationHistory from './pages/consultations/UserConsultationHistory'
 
 import Profile from './pages/profile/Profile'
 import Partnerships from './pages/profile/Partnerships'
@@ -33,6 +35,12 @@ import ProfessionalProfile from './pages/professional/ProfessionalProfile'
 import CreateContent from './pages/professional/CreateContent'
 import EditContent from './pages/professional/EditContent'
 import PublicProfessionalProfile from './pages/professional/PublicProfessionalProfile'
+import ConsultationOverview from './pages/professional/consultations/ConsultationOverview'
+import ConsultationSchedule from './pages/professional/consultations/ConsultationSchedule'
+import ConsultationAppointments from './pages/professional/consultations/ConsultationAppointments'
+import ConsultationHistory from './pages/professional/consultations/ConsultationHistory'
+import ConsultationEarnings from './pages/professional/consultations/ConsultationEarnings'
+import PaymentSettings from './pages/professional/consultations/PaymentSettings'
 
 function App() {
   return (
@@ -61,6 +69,13 @@ function App() {
         <Route path="/professional/profile" element={<ProfessionalProfile />} />
         <Route path="/professional/content/create" element={<CreateContent />} />
         <Route path="/professional/content/edit/:id" element={<EditContent />} />
+        {/* Professional Consultations */}
+        <Route path="/professional/consultations" element={<ConsultationOverview />} />
+        <Route path="/professional/consultations/schedule" element={<ConsultationSchedule />} />
+        <Route path="/professional/consultations/appointments" element={<ConsultationAppointments />} />
+        <Route path="/professional/consultations/history" element={<ConsultationHistory />} />
+        <Route path="/professional/consultations/earnings" element={<ConsultationEarnings />} />
+        <Route path="/professional/consultations/payments" element={<PaymentSettings />} />
       </Route>
 
       {/* Health Profile Setup Flow */}
@@ -75,6 +90,8 @@ function App() {
         <Route path="/health" element={<Health />} />
         <Route path="/rewards" element={<Rewards />} />
         <Route path="/community" element={<Community />} />
+        <Route path="/consultations" element={<ConsultationsDiscovery />} />
+        <Route path="/consultation-history" element={<UserConsultationHistory />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/partnerships" element={<Partnerships />} />
         <Route path="/settings" element={<Settings />} />

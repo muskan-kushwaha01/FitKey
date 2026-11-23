@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { getPublicProfessionalProfile } from '../../services/professional/professionalDiscoveryService.js'
+import { getConsultationSettings } from '../../services/professional/professionalConsultationService.js'
 import {
     getCommunityUser,
     setCommunityUserName,
@@ -18,6 +19,7 @@ import {
 import { getRatingSummary, getReviewsForProfessional } from '../../services/professional/professionalReviewService.js'
 import ProfessionalReviews, { StarRow } from '../../components/professional/ProfessionalReviews.jsx'
 import ProfessionalContentGrid from '../../components/professional/ProfessionalContentGrid.jsx'
+import AppointmentBookingModal from '../../components/consultations/AppointmentBookingModal.jsx'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -174,6 +176,8 @@ function PublicProfessionalProfile() {
     const [editing, setEditing] = useState(false)
     const [ratingSummary, setRatingSummary] = useState({ avg: 0, total: 0, distribution: {} })
     const [reviews, setReviews] = useState([])
+    const [consultationSettings, setConsultationSettings] = useState(null)
+    const [showBookingModal, setShowBookingModal] = useState(false)
 
     const refresh = useCallback(() => {
         const profile = getPublicProfessionalProfile(id)
@@ -183,6 +187,12 @@ function PublicProfessionalProfile() {
         const allReviews = getReviewsForProfessional(id)
         setReviews(allReviews)
         setUserReview(getUserReviewForProfessional(communityUser.id, id))
+        try {
+            const cs = getConsultationSettings(id)
+            setConsultationSettings(cs)
+        } catch {
+            setConsultationSettings(null)
+        }
     }, [id, communityUser.id])
 
     useEffect(() => { refresh() }, [refresh])
@@ -370,6 +380,58 @@ function PublicProfessionalProfile() {
                     </div>
                 </div>
 
+                {/* ── 2.5 Consultation & Telehealth Availability ──────────────── */}
+                {consultationSettings?.consultationsEnabled && (
+                    <div className="rounded-2xl border-2 border-[#DCE7E3] bg-gradient-to-br from-[#E4F0EA]/40 via-white to-white p-5 space-y-4 shadow-xs">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E8EFEB]">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <span className="flex h-2.5 w-2.5 rounded-full bg-[#2F7B58] animate-pulse" />
+                                    <h2 className="text-sm font-bold text-[#033135]">
+                                        Telehealth Phone Consultations
+                                    </h2>
+                                </div>
+                                <p className="text-xs text-[#647572] mt-0.5">
+                                    Verified 1-on-1 direct phone consultation with {displayName}.
+                                </p>
+                            </div>
+                            <div className="text-left sm:text-right">
+                                <span className="text-[10px] uppercase font-bold text-[#647572]">Fee per Session</span>
+                                <p className="text-lg font-black text-[#033135]">
+                                    ₹{consultationSettings.consultationFee}
+                                    <span className="text-xs font-normal text-[#647572]"> / {consultationSettings.durationMinutes}m</span>
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs text-[#647572]">
+                            <div className="rounded-xl bg-[#FAFBF9] border border-[#E8EFEB] p-2.5">
+                                <span className="text-[10px] font-bold text-[#033135] uppercase">Session Length</span>
+                                <p className="font-semibold text-[#033135] mt-0.5">{consultationSettings.durationMinutes} mins (+{consultationSettings.bufferMinutes}m buffer)</p>
+                            </div>
+                            <div className="rounded-xl bg-[#FAFBF9] border border-[#E8EFEB] p-2.5">
+                                <span className="text-[10px] font-bold text-[#033135] uppercase">Mode</span>
+                                <p className="font-semibold text-[#2F7B58] mt-0.5">Direct Phone Call</p>
+                            </div>
+                        </div>
+
+                        <div className="pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <p className="text-[11px] text-[#647572] max-w-sm">
+                                Direct phone appointments connect during scheduled clinical hours.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => setShowBookingModal(true)}
+                                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#033135] px-5 py-2.5 text-xs font-bold !text-white hover:bg-[#324C4D] transition shadow-xs shrink-0"
+                                style={{ color: '#ffffff' }}
+                            >
+                                <Phone size={13} />
+                                <span>Book Consultation</span>
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* ── 3. Rating Summary + Reviews ──────────────────────────── */}
                 <div className="rounded-2xl border border-[#E8EFEB] bg-white p-5 space-y-5">
                     <h2 className="text-sm font-bold text-[#033135]">Ratings &amp; Reviews</h2>
@@ -463,6 +525,14 @@ function PublicProfessionalProfile() {
                     </section>
                 )}
             </div>
+
+            {/* Booking Modal */}
+            <AppointmentBookingModal
+                professional={professional}
+                isOpen={showBookingModal}
+                onClose={() => setShowBookingModal(false)}
+                onBookingSuccess={() => refresh()}
+            />
         </div>
     )
 }

@@ -11,15 +11,14 @@ import {
     HeartPulse,
     Trophy,
     Users,
+    Stethoscope,
+    CalendarClock,
     Menu,
     X,
     UserRound,
     Handshake,
     Settings,
-    ShieldCheck,
-    CircleHelp,
     LogOut,
-    ChevronDown,
     Bell,
 } from 'lucide-react'
 
@@ -27,24 +26,23 @@ import Logo from '../components/common/Logo'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
-const navigation = [
+const bottomNavigation = [
     { name: 'Home', path: '/home', icon: Home },
     { name: 'Health', path: '/health', icon: HeartPulse },
     { name: 'Rewards', path: '/rewards', icon: Trophy },
     { name: 'Community', path: '/community', icon: Users },
 ]
 
-const profileLinks = [
-    { name: 'My Profile', icon: UserRound, path: '/profile' },
-    { name: 'Brand Partnerships', icon: Handshake, path: '/partnerships' },
-    { name: 'Settings', icon: Settings, path: '/settings' },
-    { name: 'Privacy & Security', icon: ShieldCheck, path: '/privacy' },
-    { name: 'Help & Support', icon: CircleHelp, path: '/support' },
+const sidebarNavigation = [
+    { name: 'My Profile', path: '/profile', icon: UserRound },
+    { name: 'Consultations', path: '/consultations', icon: Stethoscope },
+    { name: 'Appointments & Payments', path: '/consultation-history', icon: CalendarClock },
+    { name: 'Brand Partnerships', path: '/partnerships', icon: Handshake },
+    { name: 'Settings', path: '/settings', icon: Settings },
 ]
 
 function MainLayout() {
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-    const [profileMenuOpen, setProfileMenuOpen] = useState(false)
 
     const navigate = useNavigate()
     const location = useLocation()
@@ -58,7 +56,6 @@ function MainLayout() {
         })
 
         setMobileMenuOpen(false)
-        setProfileMenuOpen(false)
     }, [location.pathname])
 
     const handleLogout = () => {
@@ -66,24 +63,33 @@ function MainLayout() {
         navigate('/login')
     }
 
-    // Desktop sidebar navigation
-    const renderDesktopNavigation = () => (
-        <nav className="space-y-2">
-            {navigation.map((item) => {
+    // Sidebar navigation items
+    const renderSidebarNavigation = (isMobile = false) => (
+        <nav className="space-y-1.5">
+            {sidebarNavigation.map((item) => {
                 const Icon = item.icon
+                const isCurrent =
+                    location.pathname === item.path ||
+                    (item.path === '/consultations' &&
+                        location.pathname === '/consultations') ||
+                    (item.path === '/consultation-history' &&
+                        location.pathname === '/consultation-history')
 
                 return (
                     <NavLink
                         key={item.path}
                         to={item.path}
+                        onClick={() => {
+                            if (isMobile) setMobileMenuOpen(false)
+                        }}
                         className={({ isActive }) =>
-                            `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all ${isActive
-                                ? 'bg-[#C4D7D4]/20 text-white'
+                            `flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold transition ${isCurrent || isActive
+                                ? 'bg-[#C4D7D4]/25 text-white shadow-2xs'
                                 : 'text-[#E4F0EA] hover:bg-white/10 hover:text-white'
                             }`
                         }
                     >
-                        <Icon size={20} />
+                        <Icon size={19} className="shrink-0" />
                         <span>{item.name}</span>
                     </NavLink>
                 )
@@ -91,38 +97,10 @@ function MainLayout() {
         </nav>
     )
 
-    // Mobile drawer navigation
-
-    const renderMobileDrawerNavigation = () => (
-        <nav className="space-y-2">
-            {navigation.map((item) => {
-                const Icon = item.icon
-
-                return (
-                    <NavLink
-                        key={item.path}
-                        to={item.path}
-                        style={({ isActive }) => ({
-                            color: '#FFFFFF',
-                            backgroundColor: isActive
-                                ? 'rgba(196, 215, 212, 0.25)'
-                                : 'transparent',
-                        })}
-                        className="flex w-full items-center gap-3 rounded-xl px-4 py-3.5 text-sm font-semibold"
-                    >
-                        <Icon size={20} color="#FFFFFF" />
-                        <span style={{ color: '#FFFFFF' }}>{item.name}</span>
-                    </NavLink>
-                )
-            })}
-        </nav>
-    )
-
-
     // Mobile bottom navigation
     const renderBottomNavigation = () => (
         <nav className="grid grid-cols-4">
-            {navigation.map((item) => {
+            {bottomNavigation.map((item) => {
                 const Icon = item.icon
 
                 return (
@@ -157,81 +135,43 @@ function MainLayout() {
         <div className="min-h-screen bg-[#F8FAF7]">
 
             {/* Desktop Sidebar */}
-            <aside className="fixed left-0 top-0 z-30 hidden h-screen w-64 flex-col bg-[#033135] px-5 py-7 text-white lg:flex">
+            <aside className="fixed left-0 top-0 z-30 hidden h-screen w-64 flex-col overflow-y-auto bg-[#033135] px-5 py-7 text-white lg:flex">
 
-                <div className="mb-12">
+                <div className="mb-8">
                     <Logo light />
                 </div>
 
-                <p className="mb-4 px-4 text-[10px] font-bold tracking-[2px] text-[#C4D7D4]/70">
-                    MAIN MENU
+                <p className="mb-3 px-3 text-[10px] font-bold tracking-[2px] text-[#C4D7D4]/70">
+                    ACCOUNT & PRACTICE
                 </p>
 
-                {renderDesktopNavigation()}
+                {renderSidebarNavigation(false)}
 
-                <div className="mt-auto">
+                <div className="mt-auto pt-6">
 
-                    <div className="mb-6 rounded-2xl bg-white/10 p-4">
+                    {/* Progress card */}
+                    <div className="mb-5 rounded-2xl bg-white/10 p-4">
                         <div className="mb-2 flex items-center gap-2 text-[#F8E7A5]">
                             <Trophy size={18} />
                             <span className="text-sm font-semibold">Your Progress</span>
                         </div>
-                        <p className="text-3xl" style={{ fontFamily: SERIF }}>250 XP</p>
+                        <p className="text-3xl text-white" style={{ fontFamily: SERIF }}>250 XP</p>
                         <p className="mt-1 text-xs text-[#E4F0EA]">
                             Keep building healthy habits!
                         </p>
                     </div>
 
-                    <div className="relative border-t border-white/15 pt-5">
-
+                    {/* Logout */}
+                    <div className="border-t border-white/15 pt-4">
                         <button
-                            onClick={() => setProfileMenuOpen(!profileMenuOpen)}
-                            className="flex w-full items-center gap-3 text-left"
+                            onClick={handleLogout}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#FFD9C7] hover:bg-white/10 transition"
                         >
-                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#C4D7D4] font-bold text-[#033135]">
-                                U
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                                <p className="text-sm font-semibold">Your Profile</p>
-                                <p className="text-xs text-[#E4F0EA]">
-                                    Wellness Member
-                                </p>
-                            </div>
-
-                            <ChevronDown size={17} />
+                            <LogOut size={19} />
+                            <span>Logout</span>
                         </button>
-
-                        {profileMenuOpen && (
-                            <div className="absolute bottom-16 left-0 z-50 w-full rounded-xl bg-white p-2 text-[#033135] shadow-xl">
-
-                                {profileLinks.map((item) => {
-                                    const Icon = item.icon
-
-                                    return (
-                                        <button
-                                            key={item.name}
-                                            onClick={() => navigate(item.path)}
-                                            className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-medium hover:bg-[#E4F0EA]"
-                                        >
-                                            <Icon size={17} />
-                                            {item.name}
-                                        </button>
-                                    )
-                                })}
-
-                                <div className="mt-1 border-t border-gray-100 pt-1">
-                                    <button
-                                        onClick={handleLogout}
-                                        className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm text-red-600 hover:bg-red-50"
-                                    >
-                                        <LogOut size={17} />
-                                        Logout
-                                    </button>
-                                </div>
-                            </div>
-                        )}
                     </div>
+
                 </div>
             </aside>
 
@@ -250,7 +190,7 @@ function MainLayout() {
                     <aside className="relative flex h-full w-[min(288px,85vw)] flex-col overflow-y-auto bg-[#033135] px-5 py-5 shadow-2xl">
 
                         {/* Header */}
-                        <div className="mb-8 flex items-center justify-between">
+                        <div className="mb-6 flex items-center justify-between">
                             <Logo light />
 
                             <button
@@ -261,7 +201,6 @@ function MainLayout() {
                                 <X size={23} />
                             </button>
                         </div>
-
                         {/* Progress card */}
                         <div className="mb-6 rounded-2xl bg-white/10 p-4">
                             <div className="mb-1 flex items-center gap-2 text-[#F8E7A5]">
@@ -276,34 +215,17 @@ function MainLayout() {
                             </p>
                         </div>
 
-                        {/* Account menu */}
+
+                        {/* Sidebar navigation */}
                         <p className="mb-3 px-2 text-[10px] font-bold tracking-[2px] text-[#C4D7D4]/70">
-                            ACCOUNT & MORE
+                            ACCOUNT & PRACTICE
                         </p>
 
-                        <div className="space-y-1">
-                            {profileLinks.map((item) => {
-                                const Icon = item.icon
-
-                                return (
-                                    <NavLink
-                                        key={item.name}
-                                        to={item.path}
-                                        onClick={() => setMobileMenuOpen(false)}
-                                        style={({ isActive }) => ({
-                                            color: '#FFFFFF',
-                                            backgroundColor: isActive
-                                                ? 'rgba(196, 215, 212, 0.2)'
-                                                : 'transparent',
-                                        })}
-                                        className="flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-sm font-medium"
-                                    >
-                                        <Icon size={19} color="#FFFFFF" />
-                                        <span>{item.name}</span>
-                                    </NavLink>
-                                )
-                            })}
+                        <div className="mb-6">
+                            {renderSidebarNavigation(true)}
                         </div>
+
+
 
                         {/* Logout */}
                         <div className="mt-auto border-t border-white/15 pt-4">
@@ -312,7 +234,7 @@ function MainLayout() {
                                 className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#FFD9C7] hover:bg-white/10"
                             >
                                 <LogOut size={19} />
-                                Logout
+                                <span>Logout</span>
                             </button>
                         </div>
 
@@ -348,6 +270,28 @@ function MainLayout() {
                                 </h2>
                             </div>
                         </div>
+
+                        {/* Desktop Navigation for Bottom-Nav Screens */}
+                        <nav className="hidden lg:flex items-center gap-1.5 rounded-2xl bg-white border border-[#E8EFEB] p-1.5 shadow-2xs">
+                            {bottomNavigation.map((item) => {
+                                const Icon = item.icon
+                                return (
+                                    <NavLink
+                                        key={item.path}
+                                        to={item.path}
+                                        className={({ isActive }) =>
+                                            `flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${isActive
+                                                ? 'bg-[#033135] text-white shadow-xs'
+                                                : 'text-[#647572] hover:bg-[#F8FAF7] hover:text-[#033135]'
+                                            }`
+                                        }
+                                    >
+                                        <Icon size={16} />
+                                        <span>{item.name}</span>
+                                    </NavLink>
+                                )
+                            })}
+                        </nav>
 
                         <button
                             aria-label="Notifications"

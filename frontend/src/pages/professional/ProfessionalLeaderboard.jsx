@@ -49,10 +49,7 @@ function ProfessionalLeaderboard() {
         <div className="space-y-6">
             {/* Header */}
             <div>
-                <div className="flex items-center gap-2 text-xs font-semibold text-[#647572]">
-                    <Trophy size={16} className="text-[#8B6D25]" />
-                    <span>FITKEY PROFESSIONAL RANKINGS</span>
-                </div>
+
                 <h1
                     className="mt-1 text-3xl font-normal text-[#033135] sm:text-4xl"
                     style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
@@ -70,11 +67,10 @@ function ProfessionalLeaderboard() {
                     <button
                         key={tab}
                         onClick={() => setPeriod(tab)}
-                        className={`rounded-xl px-4 py-1.5 text-xs font-bold transition ${
-                            period === tab
+                        className={`rounded-xl px-4 py-1.5 text-xs font-bold transition ${period === tab
                                 ? 'bg-[#033135] text-white shadow-xs'
                                 : 'bg-[#F0F4F2] text-[#647572] hover:bg-[#E4F0EA] hover:text-[#033135]'
-                        }`}
+                            }`}
                     >
                         {tab} Rankings
                     </button>
@@ -182,11 +178,10 @@ function ProfessionalLeaderboard() {
                             return (
                                 <div
                                     key={p.id}
-                                    className={`flex items-center gap-3 rounded-2xl p-3 transition ${
-                                        isCurrent
+                                    className={`flex items-center gap-3 rounded-2xl p-3 transition ${isCurrent
                                             ? 'bg-[#F8E7A5]/40 border-2 border-[#E0AE3A]/60 shadow-xs'
                                             : 'border border-[#E8EFEB] bg-[#FAFBF9] hover:bg-white'
-                                    }`}
+                                        }`}
                                 >
                                     <span className="w-6 text-center text-sm font-black text-[#647572]">
                                         #{entry.rank}

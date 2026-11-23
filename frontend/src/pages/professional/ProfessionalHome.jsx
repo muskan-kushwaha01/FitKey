@@ -21,8 +21,8 @@ import {
     CheckCircle2,
     Crown,
     Share2,
-    Home,
     Gift,
+    PhoneCall,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -30,6 +30,7 @@ import { getPosts } from '../../services/professional/professionalContentService
 import { getAvailableProfXP } from '../../services/professional/professionalXpService.js'
 import { getLeaderboardRankings, getProfessionalRank } from '../../services/professional/professionalLeaderboardService.js'
 import { getReviewsForProfessional } from '../../services/professional/professionalReviewService.js'
+import { getAppointments } from '../../services/professional/professionalConsultationService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -128,6 +129,9 @@ function ProfessionalHome() {
     }))
     const activities = [...reviewActivities, ...DEMO_ACTIVITIES].slice(0, 4)
 
+    // Upcoming consultation appointments
+    const upcomingAppointments = professional ? getAppointments(professional.id, { status: 'upcoming' }) : []
+
     const handleCreateContent = () => {
         navigate('/professional/content/create')
     }
@@ -201,18 +205,8 @@ function ProfessionalHome() {
                         </div>
                     </div>
 
-                    {/* Button on the screen showing pending verification to move to the main home screen */}
+                    {/* Verification action */}
                     <div className="flex items-center gap-2 shrink-0">
-                        <button
-                            type="button"
-                            onClick={() => navigate('/home')}
-                            className="flex items-center gap-1.5 rounded-xl border border-[#C4D7D4] bg-white px-3.5 py-2 text-xs font-semibold text-[#033135] shadow-xs hover:bg-[#E4F0EA] transition"
-                            title="Go to standard User App Home"
-                        >
-                            <Home size={14} />
-                            <span>Go to User Home</span>
-                        </button>
-
                         <button
                             type="button"
                             onClick={() => {
@@ -226,6 +220,66 @@ function ProfessionalHome() {
                     </div>
                 </div>
             </section>
+
+            {/* Upcoming Consultations Section - Only shown when upcoming appointments > 0 */}
+            {upcomingAppointments.length > 0 && (
+                <section className="rounded-2xl border border-[#DCE7E3] bg-white p-5 shadow-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#E8EFEB] pb-3 mb-4">
+                        <div className="flex items-center gap-2.5">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#E4F0EA] text-[#033135]">
+                                <PhoneCall size={16} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold text-[#033135]">
+                                    Upcoming Consultations ({upcomingAppointments.length})
+                                </h3>
+                                <p className="text-[11px] text-[#647572]">
+                                    Scheduled patient phone appointments awaiting consultation.
+                                </p>
+                            </div>
+                        </div>
+
+                        <Link
+                            to="/professional/consultations/appointments"
+                            className="text-xs font-bold text-[#033135] hover:text-[#648C83] flex items-center gap-1 transition self-start sm:self-auto"
+                        >
+                            <span>View All Appointments</span>
+                            <ArrowRight size={13} />
+                        </Link>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {upcomingAppointments.slice(0, 2).map((apt) => (
+                            <div
+                                key={apt.id}
+                                className="flex items-center justify-between rounded-xl border border-[#E8EFEB] bg-[#FAFBF9] p-3.5 hover:border-[#C4D7D4] transition"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white border border-[#E8EFEB] text-[#033135] font-bold text-xs">
+                                        {apt.patientName?.charAt(0) || 'P'}
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-bold text-[#033135]">
+                                            {apt.patientName}
+                                        </p>
+                                        <p className="text-[11px] text-[#647572]">
+                                            {apt.date} · {apt.time} ({apt.durationMinutes}m)
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <Link
+                                    to="/professional/consultations/appointments"
+                                    className="rounded-lg bg-[#033135] px-3.5 py-1.5 text-[11px] font-bold !text-white hover:bg-[#324C4D] transition shadow-xs"
+                                    style={{ color: '#ffffff' }}
+                                >
+                                    Call
+                                </Link>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
 
             {/* 3. Core Metrics Grid (XP, Posts, Views, Engagement) */}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">

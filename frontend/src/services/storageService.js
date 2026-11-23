@@ -22,6 +22,8 @@ export const STORAGE_KEYS = {
   PROF_REDEMPTIONS: 'fk_prof_redemptions',
   PROF_REVIEWS: 'fk_prof_reviews',
   COMMUNITY_USER: 'fk_community_user',
+  PROF_CONSULTATION_SETTINGS: 'fk_prof_consultation_settings',
+  PROF_APPOINTMENTS: 'fk_prof_appointments',
 }
 
 /**
