@@ -286,91 +286,117 @@ function ProfessionalHome() {
                 {/* Available XP Balance */}
                 <div
                     onClick={() => navigate('/professional/xp?tab=redeem')}
-                    className="group rounded-2xl border-2 border-[#E0AE3A]/40 bg-gradient-to-br from-[#F8E7A5]/25 via-white to-white p-4 sm:p-5 shadow-xs transition hover:shadow-md cursor-pointer"
+                    className="group flex flex-col justify-between rounded-2xl border-2 border-[#E0AE3A]/40 bg-gradient-to-br from-[#F8E7A5]/25 via-white to-white p-3.5 sm:p-5 shadow-xs transition hover:shadow-md cursor-pointer"
                 >
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-[#8B6D25] uppercase tracking-wider">
-                            Available XP
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#F8E7A5] text-[#8B6D25]">
-                            <Zap size={16} fill="currentColor" />
+                    <div>
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-[#8B6D25] truncate">
+                                Available XP
+                            </span>
+                            <div className="flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-xl bg-[#F8E7A5] text-[#8B6D25]">
+                                <Zap size={14} className="sm:w-4 sm:h-4" fill="currentColor" />
+                            </div>
+                        </div>
+                        <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
+                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                {liveXP.toLocaleString()}
+                            </span>
+                            <span className="text-[11px] sm:text-xs font-bold text-[#8B6D25]">XP</span>
                         </div>
                     </div>
-                    <div className="mt-3 flex items-baseline gap-1.5">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            {liveXP.toLocaleString()}
-                        </span>
-                        <span className="text-xs font-bold text-[#8B6D25]">XP</span>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between pt-1.5 border-t border-[#E8EFEB]">
-                        <span className="text-[10px] text-[#2F7B58] font-bold">Ready to redeem</span>
-                        <span className="text-[11px] font-extrabold text-[#033135] group-hover:text-[#648C83] flex items-center gap-0.5">
+                    <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
+                        <span className="font-bold text-[#2F7B58] truncate">Ready to redeem</span>
+                        <span className="font-extrabold text-[#033135] group-hover:text-[#648C83] flex items-center gap-0.5 shrink-0">
                             Redeem <ArrowRight size={11} />
                         </span>
                     </div>
                 </div>
 
                 {/* Published Posts */}
-                <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4 sm:p-5 shadow-xs transition hover:shadow-sm">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-[#647572] uppercase tracking-wider">
-                            Published Posts
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#E4F0EA] text-[#324C4D]">
-                            <FileText size={16} />
+                <div
+                    onClick={() => navigate('/professional/profile')}
+                    className="group flex flex-col justify-between rounded-2xl border border-[#E8EFEB] bg-white p-3.5 sm:p-5 shadow-xs transition hover:shadow-sm cursor-pointer"
+                >
+                    <div>
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-[#647572] truncate">
+                                Published Posts
+                            </span>
+                            <div className="flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-xl bg-[#E4F0EA] text-[#324C4D]">
+                                <FileText size={14} className="sm:w-4 sm:h-4" />
+                            </div>
+                        </div>
+                        <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
+                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                {publishedCount}
+                            </span>
+                            <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">articles & reels</span>
                         </div>
                     </div>
-                    <div className="mt-3 flex items-baseline gap-1.5">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            {publishedCount}
+                    <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
+                        <span className="font-semibold text-[#2F7B58] flex items-center gap-1 truncate">
+                            <TrendingUp size={11} className="shrink-0" /> 2 this month
                         </span>
-                        <span className="text-xs font-medium text-[#647572]">articles & reels</span>
+                        <span className="text-[#9AA6A0] font-medium hidden xs:inline shrink-0">Active</span>
                     </div>
-                    <p className="mt-1 text-[11px] text-[#2F7B58] font-semibold flex items-center gap-1">
-                        <TrendingUp size={12} /> 2 published this month
-                    </p>
                 </div>
 
                 {/* Total Content Views */}
-                <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4 sm:p-5 shadow-xs transition hover:shadow-sm">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-[#647572] uppercase tracking-wider">
-                            Content Views
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#DCD6F7] text-[#625780]">
-                            <Eye size={16} />
+                <div
+                    onClick={() => navigate('/professional/profile')}
+                    className="group flex flex-col justify-between rounded-2xl border border-[#E8EFEB] bg-white p-3.5 sm:p-5 shadow-xs transition hover:shadow-sm cursor-pointer"
+                >
+                    <div>
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-[#647572] truncate">
+                                Content Views
+                            </span>
+                            <div className="flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-xl bg-[#DCD6F7] text-[#625780]">
+                                <Eye size={14} className="sm:w-4 sm:h-4" />
+                            </div>
+                        </div>
+                        <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
+                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                8.4K
+                            </span>
+                            <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">readers</span>
                         </div>
                     </div>
-                    <div className="mt-3 flex items-baseline gap-1.5">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            8.4K
+                    <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
+                        <span className="font-semibold text-[#2F7B58] flex items-center gap-1 truncate">
+                            <TrendingUp size={11} className="shrink-0" /> +18.4%
                         </span>
-                        <span className="text-xs font-medium text-[#647572]">readers</span>
+                        <span className="text-[#9AA6A0] font-medium hidden xs:inline shrink-0">Growth</span>
                     </div>
-                    <p className="mt-1 text-[11px] text-[#2F7B58] font-semibold flex items-center gap-1">
-                        <TrendingUp size={12} /> +18.4% engagement
-                    </p>
                 </div>
 
                 {/* Total Engagement */}
-                <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4 sm:p-5 shadow-xs transition hover:shadow-sm">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-[#647572] uppercase tracking-wider">
-                            Total Engagement
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#FFD9C7] text-[#A45E45]">
-                            <Heart size={16} />
+                <div
+                    onClick={() => navigate('/professional/profile')}
+                    className="group flex flex-col justify-between rounded-2xl border border-[#E8EFEB] bg-white p-3.5 sm:p-5 shadow-xs transition hover:shadow-sm cursor-pointer"
+                >
+                    <div>
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-[#647572] truncate">
+                                Total Engagement
+                            </span>
+                            <div className="flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-xl bg-[#FFD9C7] text-[#A45E45]">
+                                <Heart size={14} className="sm:w-4 sm:h-4" />
+                            </div>
+                        </div>
+                        <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
+                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                1,240
+                            </span>
+                            <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">interactions</span>
                         </div>
                     </div>
-                    <div className="mt-3 flex items-baseline gap-1.5">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            1,240
+                    <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
+                        <span className="font-semibold text-[#647572] flex items-center gap-1 truncate">
+                            <Heart size={11} className="text-[#C0563B] shrink-0" fill="currentColor" /> Likes & notes
                         </span>
-                        <span className="text-xs font-medium text-[#647572]">interactions</span>
+                        <span className="text-[#2F7B58] font-bold hidden xs:inline shrink-0">+12%</span>
                     </div>
-                    <p className="mt-1 text-[11px] text-[#647572]">
-                        Likes, comments & bookmarks
-                    </p>
                 </div>
             </section>
 
