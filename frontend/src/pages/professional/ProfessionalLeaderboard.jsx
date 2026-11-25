@@ -4,7 +4,7 @@ import {
     Trophy, Crown, Star, TrendingUp, ShieldCheck,
     BadgeCheck,
 } from 'lucide-react'
-import { getLeaderboardRankings } from '../../services/professional/professionalLeaderboardService.js'
+import { getLeaderboardAsync } from '../../services/professional/professionalLeaderboardService.js'
 import { StarRow } from '../../components/professional/ProfessionalReviews.jsx'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
@@ -20,8 +20,27 @@ function ProfessionalLeaderboard() {
     const [period, setPeriod] = useState('All-Time')
 
     useEffect(() => {
-        const data = getLeaderboardRankings()
-        setRankings(data)
+        getLeaderboardAsync(50).then((result) => {
+            if (result?.success && result.entries) {
+                // Convert to shape expected by the existing render code
+                const shaped = result.entries.map((e) => ({
+                    rank: e.rank,
+                    professional: {
+                        id: e.professionalId,
+                        fullName: e.fullName,
+                        name: e.fullName,
+                        specialization: e.specialization,
+                    },
+                    lifetimeXP: e.lifetimeXP,
+                    availableXP: e.availableXP,
+                    avgRating: e.avgRating,
+                    reviewCount: e.reviewCount,
+                    postCount: e.postCount,
+                    score: e.score,
+                }))
+                setRankings(shaped)
+            }
+        })
     }, [])
 
     const currentId = professional?.id
@@ -29,7 +48,7 @@ function ProfessionalLeaderboard() {
     // Find current user's rank entry
     const myEntry = rankings.find((r) => r.professional.id === currentId)
     const myRank = myEntry?.rank || '—'
-    const myXP = myEntry?.lifetimeXP || 0
+    const myXP = myEntry?.availableXP || 0
     const myScore = myEntry?.score || 0
 
     // Top 3 for podium
@@ -142,7 +161,7 @@ function ProfessionalLeaderboard() {
                                     </div>
                                     <p className="mt-2 text-xs font-bold truncate">{p.fullName || p.name}</p>
                                     <p className={`text-[10px] truncate ${isFirst ? 'text-[#F8E7A5] font-semibold' : 'text-[#C4D7D4]'}`}>
-                                        {entry.lifetimeXP.toLocaleString()} XP
+                                        {entry.availableXP.toLocaleString()} XP remaining
                                     </p>
                                     {entry.avgRating > 0 && (
                                         <p className="text-[9px] text-[#C4D7D4]">★ {entry.avgRating.toFixed(1)}</p>
@@ -223,7 +242,7 @@ function ProfessionalLeaderboard() {
 
                                     <div className="text-right shrink-0">
                                         <p className="text-xs font-black text-[#033135]">
-                                            {entry.lifetimeXP.toLocaleString()} <span className="text-[10px] font-normal text-[#647572]">XP</span>
+                                            {entry.availableXP.toLocaleString()} <span className="text-[10px] font-normal text-[#647572]">XP left</span>
                                         </p>
                                         <p className="text-[10px] text-[#9AA6A0]">
                                             Score {entry.score.toLocaleString()}

@@ -1,15 +1,12 @@
 // professionalXpService.js
-// Dedicated transaction ledger, balance calculation, and earning rules for professionals.
-// Completely isolated from regular user XP to prevent mixing balances.
+// Supabase-backed professional XP ledger, balance calculation, and earning rules.
+// All writes go through SECURITY DEFINER RPCs — clients cannot directly modify XP tables.
+// localStorage is used only as a read-through cache for instant UI rendering,
+// and as a migration source for one-time legacy transfer.
 
-import {
-  getItem,
-  setItem,
-  STORAGE_KEYS,
-  generateId,
-} from '../storageService.js'
+import { supabase } from '../../lib/supabase.js'
 
-// Configurable professional XP earning rules
+// ─── XP Earning Rules (kept in sync with migration SQL) ───────────────────────
 export const PROF_XP_RULES = {
   APPROVED_ARTICLE: 50,
   APPROVED_REEL: 75,
@@ -21,306 +18,245 @@ export const PROF_XP_RULES = {
   MONTHLY_EARNING_CAP: 3000,
 }
 
-// Initial seeded ledger for demo professional (Dr. Ananya Sharma)
-const INITIAL_DEMO_PROF_LEDGER = [
-  {
-    id: 'tx_init_001',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 500,
-    source: 'CREDENTIAL_VERIFICATION',
-    refId: 'cred-verif-prof_demo_001',
-    description: 'Clinical credentialing & medical council verification bonus',
-    timestamp: '2026-02-01T09:00:00.000Z',
-  },
-  {
-    id: 'tx_init_002',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 700,
-    source: 'QUALITY_CONTRIBUTION',
-    refId: 'educator-baseline-prof_demo_001',
-    description: 'Senior Clinical Educator recognition grant',
-    timestamp: '2026-02-05T10:00:00.000Z',
-  },
-  {
-    id: 'tx_init_003',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 50,
-    source: 'APPROVED_CONTENT',
-    refId: 'content-post_demo_001',
-    description: 'Approved Article: "Understanding Blood Pressure"',
-    timestamp: '2026-02-14T10:35:00.000Z',
-  },
-  {
-    id: 'tx_init_004',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 75,
-    source: 'APPROVED_CONTENT',
-    refId: 'content-post_demo_002',
-    description: 'Approved Reel: "3 Quick Thoracic Mobility Drills"',
-    timestamp: '2026-02-18T08:20:00.000Z',
-  },
-  {
-    id: 'tx_init_005',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 25,
-    source: 'APPROVED_CONTENT',
-    refId: 'content-post_demo_003',
-    description: 'Approved Discussion: "Are Electrolyte Drinks Necessary?"',
-    timestamp: '2026-02-21T12:05:00.000Z',
-  },
-  {
-    id: 'tx_init_006',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 30,
-    source: 'QUALITY_CONTRIBUTION',
-    refId: 'milestone-3posts-prof_demo_001',
-    description: 'Quality milestone: 3+ accredited educational posts published',
-    timestamp: '2026-02-21T12:10:00.000Z',
-  },
-  {
-    id: 'tx_init_007',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 20,
-    source: 'ENGAGEMENT_MILESTONE',
-    refId: 'milestone-100eng-prof_demo_001',
-    description: 'Clinical engagement milestone: 100+ patient/peer interactions',
-    timestamp: '2026-02-22T14:00:00.000Z',
-  },
-  {
-    id: 'tx_init_008',
-    professionalId: 'prof_demo_001',
-    type: 'EARN',
-    amount: 50,
-    source: 'GENUINE_REVIEW',
-    refId: 'review-batch-prof_demo_001',
-    description: '5 verified patient consultations with 5-star clinical satisfaction',
-    timestamp: '2026-02-22T16:00:00.000Z',
-  },
-]
+// ─── Cache helpers ─────────────────────────────────────────────────────────────
+const XP_CACHE_KEY = 'fk_prof_xp_cache'
 
-/**
- * Retrieve all transactions across all professionals from storage.
- */
-function getMasterLedger() {
-  const ledger = getItem(STORAGE_KEYS.PROF_XP_LEDGER, null)
-  if (!ledger) {
-    setItem(STORAGE_KEYS.PROF_XP_LEDGER, INITIAL_DEMO_PROF_LEDGER)
-    return INITIAL_DEMO_PROF_LEDGER
+function readXpCache(professionalId) {
+  try {
+    const raw = localStorage.getItem(XP_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed?.professionalId !== professionalId) return null
+    // Cache valid for 30 seconds (UI freshness, not authoritative)
+    if (Date.now() - (parsed.cachedAt || 0) > 30_000) return null
+    return parsed
+  } catch {
+    return null
   }
-  return ledger
 }
 
+function writeXpCache(professionalId, summary) {
+  try {
+    localStorage.setItem(XP_CACHE_KEY, JSON.stringify({
+      professionalId,
+      cachedAt: Date.now(),
+      ...summary,
+    }))
+  } catch { /* storage full — ignore */ }
+}
+
+function clearXpCache() {
+  try { localStorage.removeItem(XP_CACHE_KEY) } catch { /* ignore */ }
+}
+
+// ─── Public API ────────────────────────────────────────────────────────────────
+
 /**
- * Save master ledger to storage.
+ * Get full XP summary from Supabase.
+ * Returns { availableXP, lifetimeXP, redeemedXP, monthlyXP, transactions, success, error }.
  */
-function saveMasterLedger(ledger) {
-  return setItem(STORAGE_KEYS.PROF_XP_LEDGER, ledger)
+export async function getProfXPSummaryAsync(professionalId) {
+  if (!professionalId) {
+    return { success: false, error: 'No professional ID', availableXP: 0, lifetimeXP: 0,
+      redeemedXP: 0, monthlyXP: 0, transactions: [] }
+  }
+
+  const { data, error } = await supabase.rpc('get_prof_xp_summary')
+
+  if (error) {
+    console.warn('[professionalXpService] get_prof_xp_summary RPC error:', error.message)
+    return { success: false, error: error.message, availableXP: 0, lifetimeXP: 0,
+      redeemedXP: 0, monthlyXP: 0, transactions: [] }
+  }
+
+  if (!data?.success) {
+    return { success: false, error: 'Unexpected response', availableXP: 0, lifetimeXP: 0,
+      redeemedXP: 0, monthlyXP: 0, transactions: [] }
+  }
+
+  const summary = {
+    success: true,
+    availableXP: data.available_xp ?? 0,
+    lifetimeXP: data.lifetime_xp ?? 0,
+    redeemedXP: data.redeemed_xp ?? 0,
+    monthlyXP: data.monthly_xp ?? 0,
+    transactions: (data.transactions ?? []).map(normalizeTransaction),
+  }
+
+  writeXpCache(professionalId, summary)
+  return summary
+}
+
+function normalizeTransaction(tx) {
+  return {
+    id: tx.id,
+    professionalId: tx.professional_id,
+    type: tx.type,
+    amount: tx.amount ?? 0,
+    source: tx.source ?? 'GENERAL',
+    refId: tx.ref_id ?? '',
+    description: tx.description ?? '',
+    timestamp: tx.timestamp ?? tx.created_at ?? new Date().toISOString(),
+  }
 }
 
 /**
- * Get all transactions for a specific professional.
- */
-export function getProfXPTransactions(professionalId) {
-  if (!professionalId) return []
-  const master = getMasterLedger()
-  return master
-    .filter((tx) => tx.professionalId === professionalId)
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-}
-
-/**
- * Check if a transaction with a given refId has already been awarded.
- */
-export function hasAwardedProfXP(professionalId, refId) {
-  if (!professionalId || !refId) return false
-  const txs = getProfXPTransactions(professionalId)
-  return txs.some((tx) => tx.refId === refId && tx.type === 'EARN')
-}
-
-/**
- * Calculate total available spendable XP for a professional.
+ * Synchronous available XP — reads from cache.
+ * Returns 0 when cache is cold. Use getProfXPSummaryAsync for authoritative value.
  */
 export function getAvailableProfXP(professionalId) {
   if (!professionalId) return 0
-  const txs = getProfXPTransactions(professionalId)
-  let balance = 0
-  for (const tx of txs) {
-    if (tx.type === 'EARN') balance += tx.amount || 0
-    else if (tx.type === 'SPEND') balance -= tx.amount || 0
-  }
-  return Math.max(0, balance)
+  const cached = readXpCache(professionalId)
+  return cached?.availableXP ?? 0
 }
 
 /**
- * Calculate lifetime all-time earned XP for a professional.
+ * Synchronous lifetime XP — reads from cache.
  */
 export function getLifetimeProfXP(professionalId) {
   if (!professionalId) return 0
-  const txs = getProfXPTransactions(professionalId)
-  return txs
-    .filter((tx) => tx.type === 'EARN')
-    .reduce((sum, tx) => sum + (tx.amount || 0), 0)
+  const cached = readXpCache(professionalId)
+  return cached?.lifetimeXP ?? 0
 }
 
 /**
- * Calculate total XP redeemed (spent) by a professional.
+ * Synchronous redeemed XP — reads from cache.
  */
 export function getTotalProfXPRedeemed(professionalId) {
   if (!professionalId) return 0
-  const txs = getProfXPTransactions(professionalId)
-  return txs
-    .filter((tx) => tx.type === 'SPEND')
-    .reduce((sum, tx) => sum + (tx.amount || 0), 0)
+  const cached = readXpCache(professionalId)
+  return cached?.redeemedXP ?? 0
 }
 
 /**
- * Calculate XP earned in current calendar month.
+ * Synchronous monthly XP — reads from cache.
  */
 export function getMonthlyProfXP(professionalId) {
   if (!professionalId) return 0
-  const txs = getProfXPTransactions(professionalId)
-  const currentMonth = new Date().toISOString().slice(0, 7) // 'YYYY-MM'
-  return txs
-    .filter((tx) => tx.type === 'EARN' && tx.timestamp.startsWith(currentMonth))
-    .reduce((sum, tx) => sum + (tx.amount || 0), 0)
+  const cached = readXpCache(professionalId)
+  return cached?.monthlyXP ?? 0
 }
 
 /**
- * Award XP to a professional (Idempotent and subject to monthly limits).
+ * Synchronous transaction list — reads from cache.
  */
-export function awardProfXP({
+export function getProfXPTransactions(professionalId) {
+  if (!professionalId) return []
+  const cached = readXpCache(professionalId)
+  return cached?.transactions ?? []
+}
+
+/**
+ * Synchronous summary — reads from cache (compatible with existing ProfessionalXP.jsx).
+ * Call loadProfXPData() first to populate the cache.
+ */
+export function getProfXPSummary(professionalId) {
+  if (!professionalId) {
+    return { availableXP: 0, lifetimeXP: 0, redeemedXP: 0, monthlyXP: 0, transactions: [] }
+  }
+  const cached = readXpCache(professionalId)
+  if (cached) {
+    return {
+      availableXP: cached.availableXP ?? 0,
+      lifetimeXP: cached.lifetimeXP ?? 0,
+      redeemedXP: cached.redeemedXP ?? 0,
+      monthlyXP: cached.monthlyXP ?? 0,
+      transactions: cached.transactions ?? [],
+    }
+  }
+  return { availableXP: 0, lifetimeXP: 0, redeemedXP: 0, monthlyXP: 0, transactions: [] }
+}
+
+/**
+ * Load XP data from Supabase into cache for synchronous reads.
+ * Call this on component mount.
+ */
+export async function loadProfXPData(professionalId) {
+  return getProfXPSummaryAsync(professionalId)
+}
+
+/**
+ * Award XP through the secure Supabase RPC.
+ * Idempotent: duplicate refId for EARN type is silently ignored.
+ */
+export async function awardProfXP({
   professionalId,
   amount,
   source = 'GENERAL',
   refId,
   description = 'Professional XP Award',
 }) {
-  if (!professionalId) {
-    return { success: false, reason: 'NO_PROFESSIONAL_ID' }
-  }
+  if (!professionalId) return { success: false, reason: 'NO_PROFESSIONAL_ID' }
 
   const numAmount = Math.round(Number(amount))
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return { success: false, reason: 'INVALID_AMOUNT' }
+  if (isNaN(numAmount) || numAmount <= 0) return { success: false, reason: 'INVALID_AMOUNT' }
+
+  const { data, error } = await supabase.rpc('award_prof_xp', {
+    p_professional_id: professionalId,
+    p_amount: numAmount,
+    p_source: source,
+    p_ref_id: refId || `award_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    p_description: description,
+  })
+
+  if (error) {
+    console.warn('[professionalXpService] award_prof_xp error:', error.message)
+    return { success: false, reason: error.code || 'RPC_ERROR', message: error.message }
   }
 
-  // Prevent duplicate awards
-  if (refId && hasAwardedProfXP(professionalId, refId)) {
-    return {
-      success: false,
-      reason: 'ALREADY_AWARDED',
-      message: 'This event has already been rewarded.',
-    }
+  if (!data?.success) {
+    return { success: false, reason: data?.reason || 'UNKNOWN', message: data?.message }
   }
 
-  // Monthly earning limit check
-  const monthlyEarned = getMonthlyProfXP(professionalId)
-  if (monthlyEarned + numAmount > PROF_XP_RULES.MONTHLY_EARNING_CAP) {
-    return {
-      success: false,
-      reason: 'MONTHLY_CAP_EXCEEDED',
-      message: `Monthly professional earning cap of ${PROF_XP_RULES.MONTHLY_EARNING_CAP} XP reached.`,
-    }
-  }
-
-  const master = getMasterLedger()
-  const record = {
-    id: `ptx_${generateId()}`,
-    professionalId,
-    type: 'EARN',
-    amount: numAmount,
-    source,
-    refId: refId || `award_${generateId()}`,
-    description,
-    timestamp: new Date().toISOString(),
-  }
-
-  master.push(record)
-  saveMasterLedger(master)
-
-  return {
-    success: true,
-    transaction: record,
-    availableXP: getAvailableProfXP(professionalId),
-  }
+  clearXpCache()
+  return { success: true, availableXP: data.available_xp ?? 0 }
 }
 
 /**
- * Spend XP for reward redemption.
+ * Spend XP through the secure Supabase redemption RPC.
  */
-export function spendProfXP({
+export async function spendProfXP({
   professionalId,
   amount,
-  refId,
+  rewardId,
+  rewardTitle,
+  rewardCategory,
   description = 'Redeemed professional reward',
 }) {
-  if (!professionalId) {
-    return { success: false, reason: 'NO_PROFESSIONAL_ID' }
-  }
+  if (!professionalId) return { success: false, reason: 'NO_PROFESSIONAL_ID' }
 
   const numAmount = Math.round(Number(amount))
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return { success: false, reason: 'INVALID_AMOUNT' }
+  if (isNaN(numAmount) || numAmount <= 0) return { success: false, reason: 'INVALID_AMOUNT' }
+
+  const { data, error } = await supabase.rpc('spend_prof_xp_and_redeem', {
+    p_reward_id: rewardId,
+    p_title: rewardTitle || description,
+    p_category: rewardCategory || 'General',
+    p_points: numAmount,
+  })
+
+  if (error) {
+    return { success: false, reason: error.code || 'RPC_ERROR', message: error.message }
   }
 
-  const available = getAvailableProfXP(professionalId)
-  if (available < numAmount) {
+  if (!data?.success) {
     return {
       success: false,
-      reason: 'INSUFFICIENT_XP',
-      availableXP: available,
-      message: `Insufficient XP. You need ${numAmount - available} more XP.`,
+      reason: data?.reason || 'FAILED',
+      message: data?.message,
+      availableXP: data?.available_xp,
     }
   }
 
-  const master = getMasterLedger()
-  const record = {
-    id: `ptx_${generateId()}`,
-    professionalId,
-    type: 'SPEND',
-    amount: numAmount,
-    source: 'REWARD_REDEMPTION',
-    refId: refId || `redeem_${generateId()}`,
-    description,
-    timestamp: new Date().toISOString(),
-  }
-
-  master.push(record)
-  saveMasterLedger(master)
-
-  return {
-    success: true,
-    transaction: record,
-    availableXP: getAvailableProfXP(professionalId),
-  }
+  clearXpCache()
+  return { success: true, availableXP: data.available_xp ?? 0, message: data.message }
 }
 
 /**
- * Get comprehensive XP summary for a professional.
+ * Check if a transaction with refId has been awarded (uses cache).
  */
-export function getProfXPSummary(professionalId) {
-  if (!professionalId) {
-    return {
-      availableXP: 0,
-      lifetimeXP: 0,
-      redeemedXP: 0,
-      monthlyXP: 0,
-      transactions: [],
-    }
-  }
-
-  return {
-    availableXP: getAvailableProfXP(professionalId),
-    lifetimeXP: getLifetimeProfXP(professionalId),
-    redeemedXP: getTotalProfXPRedeemed(professionalId),
-    monthlyXP: getMonthlyProfXP(professionalId),
-    transactions: getProfXPTransactions(professionalId),
-  }
+export function hasAwardedProfXP(professionalId, refId) {
+  if (!professionalId || !refId) return false
+  const txs = getProfXPTransactions(professionalId)
+  return txs.some((tx) => tx.refId === refId && tx.type === 'EARN')
 }

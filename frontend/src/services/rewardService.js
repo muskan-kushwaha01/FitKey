@@ -1,23 +1,30 @@
 // services/rewardService.js
-// Reward store items, XP balance validation, redemption logic, and purchase history.
+// Reward store items, server-verified atomic redemptions, and scoped cache hydration.
 
-import { REWARD_ITEMS } from '../data/rewards'
-import { getAvailableXP, spendXP } from './xpService'
-import { getItem, setItem, STORAGE_KEYS, generateId } from './storageService'
+import {
+  getItem,
+  STORAGE_KEYS,
+} from './storageService'
+import { getAvailableXP } from './xpService'
+import { REWARD_ITEMS } from '../data/rewards.js'
+import { supabase } from '../lib/supabase.js'
+import { syncRedemptionsFromSupabase, syncXPFromSupabase } from './syncService'
+
+export { syncRedemptionsFromSupabase }
 
 /**
- * Get all redemptions from storage.
+ * Get all redemptions from active user's scoped cache.
  */
 export function getRedemptions() {
-  return getItem(STORAGE_KEYS.REDEMPTIONS, [])
+  const list = getItem(STORAGE_KEYS.REDEMPTIONS, [])
+  return Array.isArray(list) ? list : []
 }
 
 /**
  * Get list of IDs of claimed rewards.
  */
 export function getClaimedRewardIds() {
-  const redemptions = getRedemptions()
-  return redemptions.map((r) => r.rewardId)
+  return getRedemptions().map((r) => r.rewardId)
 }
 
 /**
@@ -25,82 +32,41 @@ export function getClaimedRewardIds() {
  */
 export function getRewardStoreItems() {
   const availableXP = getAvailableXP()
-  const claimedIds = getClaimedRewardIds()
-
+  const claimedIds = new Set(getClaimedRewardIds())
   return REWARD_ITEMS.map((item) => {
-    const isClaimed = claimedIds.includes(item.id)
+    const isClaimed = claimedIds.has(item.id)
     const canAfford = availableXP >= item.points
-    const progressPercent = Math.min(
-      100,
-      Math.round((availableXP / item.points) * 100)
-    )
-    const xpNeeded = Math.max(0, item.points - availableXP)
-
     return {
       ...item,
       isClaimed,
       canAfford,
-      progressPercent,
-      xpNeeded,
+      progressPercent: Math.min(100, Math.round((availableXP / item.points) * 100)),
+      xpNeeded: Math.max(0, item.points - availableXP),
       availableXP,
     }
   })
 }
 
 /**
- * Redeem a reward item using available XP.
+ * Redeem a reward item atomically through the trusted server-side `redeem_reward` RPC.
+ * Never fabricates client-side redemptions or accepts client prices.
  */
-export function redeemReward(rewardId) {
-  const item = REWARD_ITEMS.find((r) => r.id === rewardId)
-  if (!item) {
+export async function redeemReward(rewardId) {
+  if (!REWARD_ITEMS.some((item) => item.id === rewardId)) {
     return { success: false, reason: 'ITEM_NOT_FOUND', message: 'Reward item not found.' }
   }
-
-  const claimedIds = getClaimedRewardIds()
-  if (claimedIds.includes(rewardId)) {
-    return {
-      success: false,
-      reason: 'ALREADY_CLAIMED',
-      message: 'You have already claimed this reward.',
-    }
+  const { data, error } = await supabase.rpc('redeem_reward', { p_reward_id: rewardId })
+  if (error) {
+    return { success: false, reason: error.code || 'REDEMPTION_FAILED', message: error.message || 'Could not redeem reward.' }
   }
+  if (!data?.success) return data || { success: false, reason: 'REDEMPTION_FAILED', message: 'Could not redeem reward.' }
 
-  const availableXP = getAvailableXP()
-  if (availableXP < item.points) {
-    return {
-      success: false,
-      reason: 'INSUFFICIENT_XP',
-      message: `You need ${item.points - availableXP} more XP to unlock this reward.`,
-    }
+  const { data: authData } = await supabase.auth.getUser()
+  if (authData?.user?.id) {
+    await Promise.all([
+      syncXPFromSupabase(authData.user.id),
+      syncRedemptionsFromSupabase(authData.user.id),
+    ])
   }
-
-  // Deduct XP via transaction ledger
-  const spendResult = spendXP({
-    amount: item.points,
-    refId: `redeem-${item.id}-${generateId()}`,
-    description: `Redeemed ${item.title}`,
-  })
-
-  if (!spendResult.success) {
-    return {
-      success: false,
-      reason: spendResult.reason,
-      message: 'Failed to deduct XP for this redemption.',
-    }
-  }
-
-  // Persist redemption record
-  const redemptions = getRedemptions()
-  const record = {
-    id: generateId(),
-    rewardId: item.id,
-    title: item.title,
-    points: item.points,
-    redeemedAt: new Date().toISOString(),
-  }
-  redemptions.push(record)
-  setItem(STORAGE_KEYS.REDEMPTIONS, redemptions)
-
-  return { success: true, item: record, message: `Successfully unlocked ${item.title}!` }
+  return data
 }
-

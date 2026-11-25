@@ -1,11 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import {
     Calendar as CalendarIcon,
     Clock,
     Phone,
     Save,
-    Plus,
     Trash2,
     CalendarX,
     ArrowLeft,
@@ -25,9 +24,9 @@ import {
     Globe,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getCurrentProfessional } from '../../../services/professional/professionalAuthService.js'
 import {
-    getConsultationSettings,
+    fetchConsultationSettings,
+    fetchAppointments,
     saveConsultationSettings,
     addBlockedDate,
     removeBlockedDate,
@@ -67,6 +66,7 @@ export default function ConsultationSchedule() {
     const [professional, setProfessional] = useState(contextProf || null)
     const [settings, setSettings] = useState(null)
     const [activeTab, setActiveTab] = useState('calendar') // 'calendar' | 'weekly_defaults'
+    const saveQueueRef = useRef(Promise.resolve())
 
     // Calendar state
     const [calendarView, setCalendarView] = useState('week') // 'day' | 'week' | 'month'
@@ -85,18 +85,41 @@ export default function ConsultationSchedule() {
         reason: '',
     })
 
-    const loadData = () => {
-        const prof = contextProf || getCurrentProfessional()
-        if (prof?.id) {
-            setProfessional(prof)
-            const s = getConsultationSettings(prof.id)
-            setSettings(s)
+    const loadData = async () => {
+        if (!contextProf?.id) return
+        setProfessional(contextProf)
+        try {
+            const [res, appointments] = await Promise.all([
+                fetchConsultationSettings(contextProf.id),
+                fetchAppointments(contextProf.id),
+            ])
+            setSettings(res.settings)
+            if (!res.success) toast.error(res.error || 'Could not load saved consultation settings.')
+            if (!appointments.success) toast.error(appointments.error || 'Could not load booked calendar slots.')
+        } catch (error) {
+            toast.error(error?.message || 'Could not load consultation schedule.')
         }
     }
 
     useEffect(() => {
         loadData()
     }, [contextProf])
+
+    const persistSettings = (updates) => {
+        saveQueueRef.current = saveQueueRef.current.then(async () => {
+            const res = await saveConsultationSettings(professional.id, updates)
+            if (res.success) {
+                setSettings(res.settings)
+                return
+            }
+            toast.error(res.error || 'Could not save consultation settings.')
+            const latest = await fetchConsultationSettings(professional.id)
+            if (latest.success) setSettings(latest.settings)
+        }).catch((error) => {
+            toast.error(error?.message || 'Could not save consultation settings.')
+        })
+        return saveQueueRef.current
+    }
 
     // Day slots for Day View
     const dayData = useMemo(() => {
@@ -193,9 +216,9 @@ export default function ConsultationSchedule() {
     }
 
     // Toggle Slot Block
-    const handleToggleSlotBlock = (dateStr, time24) => {
+    const handleToggleSlotBlock = async (dateStr, time24) => {
         if (!professional?.id) return
-        const res = toggleSlotBlock(professional.id, dateStr, time24)
+        const res = await toggleSlotBlock(professional.id, dateStr, time24)
         if (res.success) {
             setSettings(res.settings)
             toast.success(res.isBlocked ? `Slot ${time24} blocked` : `Slot ${time24} unblocked`)
@@ -214,10 +237,10 @@ export default function ConsultationSchedule() {
         setCustomHoursModalDate(dateStr)
     }
 
-    const handleSaveCustomHours = (e) => {
+    const handleSaveCustomHours = async (e) => {
         e.preventDefault()
         if (!professional?.id || !customHoursModalDate) return
-        const res = setDateOverride(professional.id, customHoursModalDate, customHoursForm)
+        const res = await setDateOverride(professional.id, customHoursModalDate, customHoursForm)
         if (res.success) {
             setSettings(res.settings)
             toast.success(`Custom schedule applied for ${customHoursModalDate}`)
@@ -225,9 +248,9 @@ export default function ConsultationSchedule() {
         }
     }
 
-    const handleRemoveCustomHours = (dateStr) => {
+    const handleRemoveCustomHours = async (dateStr) => {
         if (!professional?.id) return
-        const res = removeDateOverride(professional.id, dateStr)
+        const res = await removeDateOverride(professional.id, dateStr)
         if (res.success) {
             setSettings(res.settings)
             toast.success(`Reset ${dateStr} to weekly schedule default`)
@@ -236,9 +259,9 @@ export default function ConsultationSchedule() {
     }
 
     // Master Availability Toggle
-    const handleToggleMasterAvailability = () => {
+    const handleToggleMasterAvailability = async () => {
         if (!professional?.id) return
-        const res = toggleConsultationStatus(professional.id)
+        const res = await toggleConsultationStatus(professional.id)
         if (res.success) {
             setSettings(res.settings)
             toast.success(
@@ -246,6 +269,8 @@ export default function ConsultationSchedule() {
                     ? 'Consultations active for patient bookings'
                     : 'Consultations paused'
             )
+        } else {
+            toast.error(res.error || 'Could not update availability.')
         }
     }
 
@@ -738,8 +763,7 @@ export default function ConsultationSchedule() {
                                         onClick={() => {
                                             const updated = { ...settings, durationMinutes: mins }
                                             setSettings(updated)
-                                            saveConsultationSettings(professional.id, updated)
-                                            toast.success(`Duration set to ${mins} mins`)
+                                            persistSettings({ durationMinutes: mins })
                                         }}
                                         className={`rounded-xl border p-3 text-xs font-bold transition ${settings.durationMinutes === mins
                                             ? 'border-[#033135] bg-[#E4F0EA] text-[#033135] shadow-xs'
@@ -770,8 +794,7 @@ export default function ConsultationSchedule() {
                                         onClick={() => {
                                             const updated = { ...settings, bufferMinutes: mins }
                                             setSettings(updated)
-                                            saveConsultationSettings(professional.id, updated)
-                                            toast.success(`Buffer set to ${mins} mins`)
+                                            persistSettings({ bufferMinutes: mins })
                                         }}
                                         className={`rounded-xl border p-3 text-xs font-bold transition ${settings.bufferMinutes === mins
                                             ? 'border-[#033135] bg-[#E4F0EA] text-[#033135] shadow-xs'
@@ -825,7 +848,7 @@ export default function ConsultationSchedule() {
                                                     }
                                                     const updated = { ...settings, schedule: updatedSchedule }
                                                     setSettings(updated)
-                                                    saveConsultationSettings(professional.id, updated)
+                                                    persistSettings({ schedule: updatedSchedule })
                                                 }}
                                                 className="h-4 w-4 rounded accent-[#033135]"
                                             />
@@ -846,7 +869,7 @@ export default function ConsultationSchedule() {
                                                             },
                                                         }
                                                         setSettings(updated)
-                                                        saveConsultationSettings(professional.id, updated)
+                                                        persistSettings({ schedule: updated.schedule })
                                                     }}
                                                     className="rounded-lg border border-[#DCE7E3] px-2 py-1 text-xs font-semibold text-[#033135]"
                                                 />
@@ -863,7 +886,7 @@ export default function ConsultationSchedule() {
                                                             },
                                                         }
                                                         setSettings(updated)
-                                                        saveConsultationSettings(professional.id, updated)
+                                                        persistSettings({ schedule: updated.schedule })
                                                     }}
                                                     className="rounded-lg border border-[#DCE7E3] px-2 py-1 text-xs font-semibold text-[#033135]"
                                                 />

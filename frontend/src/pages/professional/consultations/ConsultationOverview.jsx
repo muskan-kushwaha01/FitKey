@@ -4,16 +4,11 @@ import {
     Calendar,
     Clock,
     Phone,
-    ShieldCheck,
     CheckCircle2,
     XCircle,
     ArrowRight,
-    Users,
-    TrendingUp,
     Settings,
     AlertCircle,
-    CreditCard,
-    Sparkles,
     CalendarCheck,
     ChevronRight,
     PhoneCall,
@@ -27,12 +22,11 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
-    getConsultationSettings,
+    fetchConsultationSettings,
     toggleConsultationStatus,
-    getAppointments,
-    getEarningsSummary,
+    fetchAppointments,
+    fetchEarningsSummary,
     DAYS_OF_WEEK,
-    updateAppointmentStatus,
 } from '../../../services/professional/professionalConsultationService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
@@ -51,19 +45,50 @@ export default function ConsultationOverview() {
     const [selectedAptDetails, setSelectedAptDetails] = useState(null)
     const [callConfirmApt, setCallConfirmApt] = useState(null)
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!professional?.id) return
         setLoading(true)
         try {
-            const s = getConsultationSettings(professional.id)
-            const allApts = getAppointments(professional.id)
-            const apts = getAppointments(professional.id, { status: 'upcoming' })
-            const earn = getEarningsSummary(professional.id)
 
-            setSettings(s)
-            setAllAppointments(allApts)
-            setUpcomingAppointments(apts)
+            const [s, allApts, apts, earn] = await Promise.all([
+                fetchConsultationSettings(professional.id),
+                fetchAppointments(professional.id),
+                fetchAppointments(professional.id, { status: 'upcoming' }),
+                fetchEarningsSummary(professional.id),
+            ])
+
+            setSettings(s.settings)
+            if (!s.success) toast.error(s.error || 'Could not load saved consultation settings.')
+
+            if (!allApts?.success) {
+                console.error('[ConsultationOverview] All appointments:', allApts?.error)
+            }
+
+            setAllAppointments(
+                Array.isArray(allApts?.appointments)
+                    ? allApts.appointments
+                    : []
+            )
+
+            if (!apts?.success) {
+                console.error('[ConsultationOverview] Upcoming appointments:', apts?.error)
+            }
+
+            setUpcomingAppointments(
+                Array.isArray(apts?.appointments)
+                    ? apts.appointments
+                    : []
+            )
+
             setEarnings(earn)
+            if (!allApts?.success) {
+                console.error('[ConsultationOverview] All appointments:', allApts?.error)
+            }
+
+            if (!apts?.success) {
+                console.error('[ConsultationOverview] Upcoming appointments:', apts?.error)
+            }
+
         } catch (err) {
             console.error('[ConsultationOverview] Error loading data:', err)
             toast.error('Could not load consultation overview.')
@@ -76,9 +101,9 @@ export default function ConsultationOverview() {
         loadData()
     }, [loadData])
 
-    const handleToggleStatus = () => {
+    const handleToggleStatus = async () => {
         if (!professional?.id) return
-        const res = toggleConsultationStatus(professional.id)
+        const res = await toggleConsultationStatus(professional.id)
         if (res.success) {
             setSettings(res.settings)
             toast.success(
@@ -110,21 +135,6 @@ export default function ConsultationOverview() {
     const isEnabled = settings.consultationsEnabled
     const isConfigured = Boolean(settings.configuredAt)
 
-    // Calculate active working days summary
-    const activeDays = DAYS_OF_WEEK.filter((d) => settings.schedule?.[d.key]?.enabled)
-    const activeDaysLabel =
-        activeDays.length === 7
-            ? 'Every day (Mon–Sun)'
-            : activeDays.length === 5 && !settings.schedule?.saturday?.enabled && !settings.schedule?.sunday?.enabled
-                ? 'Mon–Fri'
-                : activeDays.map((d) => d.short).join(', ') || 'No active days set'
-
-    // Today's appointments (ISO format)
-    const todayIso = new Date().toISOString().split('T')[0]
-    const todayAppointments = allAppointments.filter(
-        (a) => a.date === todayIso && a.status === 'upcoming'
-    )
-
     // Recent consultation activity (latest completed, cancelled, or updated records)
     const recentActivity = [...allAppointments]
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
@@ -153,8 +163,8 @@ export default function ConsultationOverview() {
                         type="button"
                         onClick={handleToggleStatus}
                         className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition shadow-xs active:scale-[0.99] ${isEnabled
-                                ? 'bg-[#E4F0EA] text-[#2F7B58] border border-[#2F7B58]/30 hover:bg-[#D5EAE0]'
-                                : 'bg-[#FAFBF9] text-[#647572] border border-[#DCE7E3] hover:bg-[#F0F4F2]'
+                            ? 'bg-[#E4F0EA] text-[#2F7B58] border border-[#2F7B58]/30 hover:bg-[#D5EAE0]'
+                            : 'bg-[#FAFBF9] text-[#647572] border border-[#DCE7E3] hover:bg-[#F0F4F2]'
                             }`}
                     >
                         <Power size={14} className={isEnabled ? 'text-[#2F7B58]' : 'text-[#647572]'} />
@@ -207,171 +217,6 @@ export default function ConsultationOverview() {
                     </div>
                 </div>
             )}
-
-            {/* 1. Core Consultation Metrics Grid (4 Cards) */}
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-                {/* Consultation Fee */}
-                <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4 sm:p-5 shadow-xs">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[10px] sm:text-[11px] font-bold text-[#647572] uppercase tracking-wider">
-                            Consultation Fee
-                        </span>
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#E4F0EA] text-[#2F7B58]">
-                            <CreditCard size={14} />
-                        </div>
-                    </div>
-                    <div className="mt-2 flex items-baseline gap-1">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            ₹{settings.consultationFee}
-                        </span>
-                        <span className="text-xs text-[#647572]">/ call</span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-[#647572]">
-                        Per {settings.durationMinutes}-min audio session
-                    </p>
-                </div>
-
-                {/* Session Duration & Buffer */}
-                <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4 sm:p-5 shadow-xs">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[10px] sm:text-[11px] font-bold text-[#647572] uppercase tracking-wider">
-                            Duration &amp; Buffer
-                        </span>
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#DCD6F7] text-[#625780]">
-                            <Clock size={14} />
-                        </div>
-                    </div>
-                    <div className="mt-2 flex items-baseline gap-1">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            {settings.durationMinutes}
-                        </span>
-                        <span className="text-xs font-bold text-[#647572]">mins</span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-[#647572]">
-                        +{settings.bufferMinutes}m buffer between calls
-                    </p>
-                </div>
-
-                {/* Weekly Active Days */}
-                <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4 sm:p-5 shadow-xs">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[10px] sm:text-[11px] font-bold text-[#647572] uppercase tracking-wider">
-                            Working Days
-                        </span>
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FAFBF9] border border-[#E8EFEB] text-[#033135]">
-                            <Calendar size={14} />
-                        </div>
-                    </div>
-                    <div className="mt-2 flex items-baseline gap-1">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            {activeDays.length}
-                        </span>
-                        <span className="text-xs text-[#647572]">days/wk</span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-[#2F7B58] font-semibold truncate">
-                        {activeDaysLabel}
-                    </p>
-                </div>
-
-                {/* Net Earnings */}
-                <div className="rounded-2xl border border-[#E8EFEB] bg-white p-4 sm:p-5 shadow-xs">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[10px] sm:text-[11px] font-bold text-[#647572] uppercase tracking-wider">
-                            Total Earnings
-                        </span>
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#F8E7A5] text-[#8B6D25]">
-                            <TrendingUp size={14} />
-                        </div>
-                    </div>
-                    <div className="mt-2 flex items-baseline gap-1">
-                        <span className="text-2xl sm:text-3xl font-black text-[#033135]">
-                            ₹{(earnings?.netEarnings || 0).toLocaleString()}
-                        </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-[#647572]">
-                        {earnings?.completedCount || 0} completed calls
-                    </p>
-                </div>
-            </div>
-
-            {/* ═════════════════════════════════════════════════════════════════════ */}
-            {/* TODAY'S APPOINTMENTS SECTION                                         */}
-            {/* ═════════════════════════════════════════════════════════════════════ */}
-            <section className="rounded-3xl border border-[#DCE7E3] bg-[#E4F0EA]/30 p-5 sm:p-6 shadow-xs">
-                <div className="flex items-center justify-between pb-3 border-b border-[#DCE7E3]">
-                    <div className="flex items-center gap-2">
-                        <span className="flex h-2.5 w-2.5 rounded-full bg-[#2F7B58] animate-pulse" />
-                        <h2 className="text-base font-extrabold text-[#033135]">
-                            Today&apos;s Appointments ({todayAppointments.length})
-                        </h2>
-                    </div>
-                    <span className="text-xs font-semibold text-[#647572]">
-                        {todayIso}
-                    </span>
-                </div>
-
-                {todayAppointments.length > 0 ? (
-                    <div className="mt-4 space-y-3">
-                        {todayAppointments.map((apt) => (
-                            <div
-                                key={apt.id}
-                                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl bg-white border border-[#DCE7E3] p-4 shadow-xs"
-                            >
-                                <div className="flex items-start gap-3">
-                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#E4F0EA] text-[#033135] font-bold text-sm">
-                                        {apt.patientName?.charAt(0) || 'P'}
-                                    </div>
-                                    <div className="space-y-0.5">
-                                        <div className="flex items-center gap-2">
-                                            <p className="text-sm font-bold text-[#033135]">{apt.patientName}</p>
-                                            <span className="rounded-full bg-[#E4F0EA] px-2 py-0.2 text-[10px] font-bold text-[#2F7B58]">
-                                                {apt.time}
-                                            </span>
-                                        </div>
-                                        <p className="text-xs text-[#647572]">
-                                            Chief complaint: <span className="font-medium text-[#033135]">{apt.notes || 'Routine consultation'}</span>
-                                        </p>
-                                        <p className="text-[11px] text-[#647572]">
-                                            Phone: <strong className="text-[#033135]">{apt.phoneConsented ? apt.patientPhone : 'Hidden'}</strong> · Fee: <strong className="text-[#2F7B58]">₹{apt.fee}</strong>
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <div className="flex items-center gap-2 self-end sm:self-center">
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedAptDetails(apt)}
-                                        className="flex items-center gap-1 rounded-xl border border-[#DCE7E3] bg-[#FAFBF9] px-3 py-1.5 text-xs font-semibold text-[#033135] hover:bg-[#E4F0EA] transition"
-                                    >
-                                        <Eye size={13} />
-                                        <span>Details</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setCallConfirmApt(apt)}
-                                        disabled={!apt.phoneConsented}
-                                        className="flex items-center gap-1.5 rounded-xl bg-[#033135] px-4 py-1.5 text-xs font-bold !text-white shadow-xs hover:bg-[#324C4D] transition disabled:opacity-40"
-                                        style={{ color: '#ffffff' }}
-                                    >
-                                        <PhoneCall size={13} />
-                                        <span>Call Patient</span>
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="mt-3 flex items-center justify-between text-xs text-[#647572] py-2">
-                        <p>No consultations scheduled for today. Check upcoming appointments below or manage slots in the calendar.</p>
-                        <Link
-                            to="/professional/consultations/schedule"
-                            className="font-bold text-[#033135] hover:underline shrink-0 ml-2"
-                        >
-                            Open Calendar &rarr;
-                        </Link>
-                    </div>
-                )}
-            </section>
 
             {/* 2. Main Two-Column Layout */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -486,8 +331,8 @@ export default function ConsultationOverview() {
                                     <div
                                         key={day.key}
                                         className={`rounded-2xl border p-3 text-xs transition ${dayConfig.enabled
-                                                ? 'bg-[#FAFBF9] border-[#DCE7E3]'
-                                                : 'bg-white border-[#E8EFEB] opacity-50'
+                                            ? 'bg-[#FAFBF9] border-[#DCE7E3]'
+                                            : 'bg-white border-[#E8EFEB] opacity-50'
                                             }`}
                                     >
                                         <div className="flex items-center justify-between">
@@ -535,10 +380,10 @@ export default function ConsultationOverview() {
                                                 <p className="font-bold text-[#033135]">{act.patientName}</p>
                                                 <span
                                                     className={`rounded-full px-1.5 py-0.2 text-[9px] font-black uppercase ${act.status === 'completed'
-                                                            ? 'bg-[#E4F0EA] text-[#2F7B58]'
-                                                            : act.status === 'cancelled'
-                                                                ? 'bg-rose-50 text-[#C0563B]'
-                                                                : 'bg-[#FAFBF9] text-[#033135] border border-[#DCE7E3]'
+                                                        ? 'bg-[#E4F0EA] text-[#2F7B58]'
+                                                        : act.status === 'cancelled'
+                                                            ? 'bg-rose-50 text-[#C0563B]'
+                                                            : 'bg-[#FAFBF9] text-[#033135] border border-[#DCE7E3]'
                                                         }`}
                                                 >
                                                     {act.status}
@@ -617,8 +462,8 @@ export default function ConsultationOverview() {
                             <h3 className="text-sm font-bold text-[#033135]">Payout Account</h3>
                             <span
                                 className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${settings.payoutSetupStatus === 'active'
-                                        ? 'bg-[#E4F0EA] text-[#2F7B58]'
-                                        : 'bg-[#F8E7A5] text-[#8B6D25]'
+                                    ? 'bg-[#E4F0EA] text-[#2F7B58]'
+                                    : 'bg-[#F8E7A5] text-[#8B6D25]'
                                     }`}
                             >
                                 {settings.payoutSetupStatus === 'active' ? 'Active' : 'Setup Required'}

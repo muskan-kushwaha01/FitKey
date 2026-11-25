@@ -2,11 +2,13 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
     ChevronLeft, BadgeCheck, Star, MapPin, Briefcase,
-    Award, Building2, Shield, FileText, Video, MessageCircle,
-    Phone, User, Edit3, Trash2, AlertCircle,
+    Award, Building2, Shield, Phone, Edit3, Trash2, AlertCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getPublicProfessionalProfile } from '../../services/professional/professionalDiscoveryService.js'
+import {
+    getPublicProfessionalProfileAsync,
+} from '../../services/professional/professionalDiscoveryService.js'
+import { useAuth } from '../../context/AuthContext.jsx'
 import { getConsultationSettings } from '../../services/professional/professionalConsultationService.js'
 import {
     getCommunityUser,
@@ -75,7 +77,7 @@ function ReviewForm({ professionalId, existingReview, communityUser, onSubmit, o
         setLoading(true)
         try {
             if (isEditing) {
-                const res = editReview({ reviewId: existingReview.id, userId: communityUser.id, rating, comment })
+                const res = await editReview({ reviewId: existingReview.id, rating, comment })
                 if (res.success) {
                     toast.success('Review updated!')
                     onSubmit()
@@ -83,9 +85,7 @@ function ReviewForm({ professionalId, existingReview, communityUser, onSubmit, o
                     toast.error(res.error || 'Failed to update review.')
                 }
             } else {
-                const res = submitReview({
-                    userId: communityUser.id,
-                    userName: finalName,
+                const res = await submitReview({
                     professionalId,
                     rating,
                     comment,
@@ -167,6 +167,7 @@ function ReviewForm({ professionalId, existingReview, communityUser, onSubmit, o
 function PublicProfessionalProfile() {
     const { id } = useParams()
     const navigate = useNavigate()
+    const { user } = useAuth()
 
     const [data, setData] = useState(null)
     const [notFound, setNotFound] = useState(false)
@@ -179,27 +180,38 @@ function PublicProfessionalProfile() {
     const [consultationSettings, setConsultationSettings] = useState(null)
     const [showBookingModal, setShowBookingModal] = useState(false)
 
-    const refresh = useCallback(() => {
-        const profile = getPublicProfessionalProfile(id)
+    const refresh = useCallback(async () => {
+        setNotFound(false)
+        const profile = await getPublicProfessionalProfileAsync(id, user?.id)
         if (!profile) { setNotFound(true); return }
         setData(profile)
-        setRatingSummary(getRatingSummary(id))
-        const allReviews = getReviewsForProfessional(id)
+        const [summary, allReviews, myReview] = await Promise.all([
+            getRatingSummary(id),
+            getReviewsForProfessional(id),
+            getUserReviewForProfessional(id),
+        ])
+        setRatingSummary(summary)
         setReviews(allReviews)
-        setUserReview(getUserReviewForProfessional(communityUser.id, id))
+        setUserReview(myReview)
         try {
             const cs = getConsultationSettings(id)
             setConsultationSettings(cs)
         } catch {
             setConsultationSettings(null)
         }
-    }, [id, communityUser.id])
+    }, [id, user?.id])
 
-    useEffect(() => { refresh() }, [refresh])
+    useEffect(() => {
+        let active = true
+        ;(async () => {
+            if (active) await refresh()
+        })()
+        return () => { active = false }
+    }, [refresh])
 
-    const handleDelete = () => {
+    const handleDelete = async () => {
         if (!userReview) return
-        const res = deleteReview({ reviewId: userReview.id, userId: communityUser.id })
+        const res = await deleteReview({ reviewId: userReview.id })
         if (res.success) {
             toast.success('Review removed.')
             refresh()

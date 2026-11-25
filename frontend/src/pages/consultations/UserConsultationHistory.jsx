@@ -4,22 +4,17 @@ import {
     Calendar,
     Clock,
     Phone,
-    User,
     CheckCircle2,
     XCircle,
     AlertCircle,
     ArrowLeft,
     FileText,
     CreditCard,
-    DollarSign,
-    ExternalLink,
     X,
-    Shield,
     Receipt,
     RefreshCw,
     Search,
     ChevronRight,
-    Tag,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
@@ -42,6 +37,7 @@ export default function UserConsultationHistory() {
 
     const [appointments, setAppointments] = useState([])
     const [payments, setPayments] = useState([])
+    const [loading, setLoading] = useState(true)
     const [aptFilter, setAptFilter] = useState('all') // all, upcoming, completed, cancelled, no_show
     const [payFilter, setPayFilter] = useState('all') // all, SUCCESSFUL, PENDING, REFUNDED, FAILED
     const [searchTerm, setSearchTerm] = useState('')
@@ -79,11 +75,20 @@ export default function UserConsultationHistory() {
         return days
     }, [])
 
-    const loadData = useCallback(() => {
-        const apts = getUserAppointments()
-        const pays = getUserPaymentHistory()
-        setAppointments(apts)
-        setPayments(pays)
+    const loadData = useCallback(async () => {
+        setLoading(true)
+        try {
+            const [apts, pays] = await Promise.all([getUserAppointments(), getUserPaymentHistory()])
+            setAppointments(apts)
+            setPayments(pays)
+        } catch (error) {
+            console.error('[UserConsultationHistory] Load error:', error)
+            toast.error(error?.message || 'Could not load consultation history.')
+            setAppointments([])
+            setPayments([])
+        } finally {
+            setLoading(false)
+        }
     }, [])
 
     useEffect(() => {
@@ -93,9 +98,19 @@ export default function UserConsultationHistory() {
     // Load available slots when rescheduling date changes
     useEffect(() => {
         if (!reschedulingApt || !rescheduleDate) return
-        const slots = getAvailableSlotsForDate(reschedulingApt.professionalId, rescheduleDate)
-        setRescheduleSlots(slots)
+        let cancelled = false
+        setRescheduleLoading(true)
+        getAvailableSlotsForDate(reschedulingApt.professionalId, rescheduleDate)
+            .then((slots) => { if (!cancelled) setRescheduleSlots(slots) })
+            .catch((error) => {
+                if (!cancelled) {
+                    setRescheduleSlots([])
+                    toast.error(error?.message || 'Could not load available slots.')
+                }
+            })
+            .finally(() => { if (!cancelled) setRescheduleLoading(false) })
         setSelectedRescheduleSlot(null)
+        return () => { cancelled = true }
     }, [reschedulingApt, rescheduleDate])
 
     const handleOpenReschedule = (apt) => {
@@ -103,17 +118,16 @@ export default function UserConsultationHistory() {
         setRescheduleDate(apt.date)
     }
 
-    const handleConfirmReschedule = () => {
+    const handleConfirmReschedule = async () => {
         if (!reschedulingApt || !rescheduleDate || !selectedRescheduleSlot) {
             toast.error('Please select an available date and time slot.')
             return
         }
         setRescheduleLoading(true)
-        const res = rescheduleAppointment(
+        const res = await rescheduleAppointment(
             reschedulingApt.id,
             rescheduleDate,
-            selectedRescheduleSlot.time24,
-            selectedRescheduleSlot.time12
+            selectedRescheduleSlot.time24
         )
         setRescheduleLoading(false)
         if (res.success) {
@@ -131,11 +145,11 @@ export default function UserConsultationHistory() {
     }
 
     // Appointment cancellation
-    const handleConfirmCancel = () => {
+    const handleConfirmCancel = async () => {
         if (!cancellingApt) return
-        const res = cancelUserAppointment(cancellingApt.id, cancelReason)
+        const res = await cancelUserAppointment(cancellingApt.id, cancelReason)
         if (res.success) {
-            toast.success('Appointment cancelled. Telehealth slot released and payment refunded.')
+            toast.success('Appointment cancelled and slot released.')
             setCancellingApt(null)
             loadData()
         } else {
@@ -286,7 +300,7 @@ export default function UserConsultationHistory() {
                         Consultation History
                     </h1>
                     <p className="mt-1 text-xs sm:text-sm text-[#647572]">
-                        Review your past and upcoming tele-appointments, clinical outcomes, and payment receipts.
+                                Review your appointment history and saved booking details.
                     </p>
                 </div>
 
@@ -374,7 +388,11 @@ export default function UserConsultationHistory() {
                     </div>
 
                     {/* Appointments List */}
-                    {filteredAppointments.length === 0 ? (
+                    {loading ? (
+                        <div className="rounded-3xl border border-[#E8EFEB] bg-white p-12 text-center text-xs text-[#647572]">
+                            Loading your consultation history…
+                        </div>
+                    ) : filteredAppointments.length === 0 ? (
                         <div className="rounded-3xl border border-[#E8EFEB] bg-white p-12 text-center">
                             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F8FAF7] text-[#9AA6A0]">
                                 <Calendar size={28} />
@@ -551,7 +569,7 @@ export default function UserConsultationHistory() {
                                 No Payment Records Found
                             </h3>
                             <p className="mx-auto mt-1 max-w-sm text-xs text-[#647572]">
-                                No consultation payment invoices match your selected filter.
+                                No payment records are available. Appointment bookings are saved, but payment checkout is not configured.
                             </p>
                         </div>
                     ) : (
@@ -758,7 +776,7 @@ export default function UserConsultationHistory() {
 
                             <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-amber-800 text-[11px] space-y-1">
                                 <p className="font-bold">Refund Policy &amp; Slot Release</p>
-                                <p>Cancelling will immediately release the slot back to the doctor&apos;s calendar and refund your paid fee of <strong>₹{cancellingApt.fee}</strong> back to your original source.</p>
+                                <p>Cancelling will release this appointment slot. No payment has been collected for this booking.</p>
                             </div>
 
                             <div>

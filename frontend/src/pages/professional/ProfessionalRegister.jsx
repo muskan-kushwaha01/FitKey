@@ -52,7 +52,7 @@ function ProfessionalRegister() {
         })
     }
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault()
 
         const { name, email, password, confirmPassword } = formData
@@ -78,17 +78,25 @@ function ProfessionalRegister() {
         }
 
         setLoading(true)
-        const result = registerProfessional({ name, email, password, confirmPassword })
-        setLoading(false)
+        try {
+            const result = await registerProfessional({ name, email, password, confirmPassword })
 
-        if (!result.success) {
-            toast.error(result.error)
-            return
+            if (!result.success) {
+                toast.error(result.error)
+                return
+            }
+
+            toast.success(result.message)
+            if (result.requiresEmailConfirmation) {
+                navigate('/professional/login')
+            } else {
+                navigate('/professional/onboarding')
+            }
+        } catch (err) {
+            toast.error(err?.message || 'Registration failed.')
+        } finally {
+            setLoading(false)
         }
-
-        toast.success(result.message)
-        // Move directly to multi-step onboarding flow
-        navigate('/professional/onboarding')
     }
 
     return (

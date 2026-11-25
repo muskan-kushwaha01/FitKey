@@ -15,27 +15,31 @@ function EditContent() {
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
-        const found = getPostById(id)
-        if (!found) {
-            toast.error('Post not found.')
-            navigate('/professional/profile')
-            return
-        }
+        let active = true
+        getPostById(id).then((found) => {
+            if (!active) return
+            if (!found) {
+                toast.error('Post not found.')
+                navigate('/professional/profile')
+                return
+            }
 
-        // Security check: cannot edit another professional's post
-        if (professional && found.authorId !== professional.id) {
-            toast.error('Unauthorized: You can only edit your own content.')
-            navigate('/professional/profile')
-            return
-        }
+            // Security check: cannot edit another professional's post
+            if (professional && found.authorId !== professional.id) {
+                toast.error('Unauthorized: You can only edit your own content.')
+                navigate('/professional/profile')
+                return
+            }
 
-        setPost(found)
-        setLoading(false)
+            setPost(found)
+            setLoading(false)
+        })
+        return () => { active = false }
     }, [id, professional, navigate])
 
-    const handleSubmit = (updates) => {
+    const handleSubmit = async (updates) => {
         if (!professional) return
-        const res = updatePost(id, professional.id, updates)
+        const res = await updatePost(id, professional.id, updates)
         if (res.success) {
             toast.success(res.message)
             navigate('/professional/profile')

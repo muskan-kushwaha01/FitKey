@@ -1,187 +1,148 @@
 // professionalReviewService.js
-// Manages user reviews and ratings for verified professionals.
-// One review per community user per professional. XP awarded on submission only (not on edit).
-// Delete does NOT remove the XP refId (prevents farm by delete+resubmit).
+// Supabase-backed professional reviews and ratings.
+// One review per authenticated reviewer per professional (enforced at DB level).
+// Professionals cannot self-review (enforced at DB constraint + RPC level).
+// XP is awarded server-side via submit_prof_review RPC.
 
-import {
-  getItem,
-  setItem,
-  STORAGE_KEYS,
-  generateId,
-} from '../storageService.js'
-import {
-  awardProfXP,
-  PROF_XP_RULES,
-} from './professionalXpService.js'
+import { supabase } from '../../lib/supabase.js'
 
-const REVIEWS_KEY = 'fk_prof_reviews'
-const COMMUNITY_USER_KEY = 'fk_community_user'
+// ─── Review helpers ────────────────────────────────────────────────────────────
 
-// ─── Community User Identity ─────────────────────────────────────────────────
-
-/**
- * Get or create a persistent community user identity for review submission.
- * Returns { id, name } — name can be updated later.
- */
-export function getCommunityUser() {
-  const existing = getItem(COMMUNITY_USER_KEY, null)
-  if (existing && existing.id) return existing
-  const newUser = {
-    id: `cu_${generateId()}`,
-    name: 'Community Member',
+function normalizeReview(row) {
+  return {
+    id: row.id,
+    userId: row.reviewer_id,
+    professionalId: row.professional_id,
+    userName: row.reviewer_name ?? 'Community Member',
+    rating: row.rating ?? 0,
+    comment: row.comment ?? '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
-  setItem(COMMUNITY_USER_KEY, newUser)
-  return newUser
 }
 
-export function setCommunityUserName(name) {
-  const user = getCommunityUser()
-  const updated = { ...user, name: (name || '').trim() || 'Community Member' }
-  setItem(COMMUNITY_USER_KEY, updated)
-  return updated
-}
+let _reviewsCache = new Map()
 
-// ─── Storage Helpers ─────────────────────────────────────────────────────────
-
-function getAllReviews() {
-  return getItem(REVIEWS_KEY, [])
-}
-
-function saveAllReviews(reviews) {
-  return setItem(REVIEWS_KEY, reviews)
-}
-
-// ─── Public API ──────────────────────────────────────────────────────────────
+// ─── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Get all approved reviews for a professional, sorted newest-first.
+ * Get all reviews for a professional, sorted newest-first.
+ * Returns array of normalized review objects.
  */
-export function getReviewsForProfessional(professionalId) {
+export async function getReviewsForProfessional(professionalId) {
   if (!professionalId) return []
-  return getAllReviews()
-    .filter((r) => r.professionalId === professionalId)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+
+  const { data, error } = await supabase
+    .from('professional_reviews')
+    .select('id, reviewer_id, professional_id, reviewer_name, rating, comment, created_at, updated_at')
+    .eq('professional_id', professionalId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.warn('[professionalReviewService] getReviewsForProfessional error:', error.message)
+    return _reviewsCache.get(professionalId) || []
+  }
+
+  const reviews = (data ?? []).map(normalizeReview)
+  _reviewsCache.set(professionalId, reviews)
+  return reviews
 }
 
 /**
- * Find this user's existing review for a given professional.
+ * Get the current user's existing review for a professional (if any).
  */
-export function getUserReviewForProfessional(userId, professionalId) {
-  if (!userId || !professionalId) return null
-  return getAllReviews().find(
-    (r) => r.userId === userId && r.professionalId === professionalId
-  ) || null
+export async function getUserReviewForProfessional(professionalId) {
+  if (!professionalId) return null
+
+  const { data: authData } = await supabase.auth.getSession()
+  if (!authData?.session?.user?.id) return null
+
+  const { data, error } = await supabase
+    .from('professional_reviews')
+    .select('*')
+    .eq('professional_id', professionalId)
+    .eq('reviewer_id', authData.session.user.id)
+    .maybeSingle()
+
+  if (error) return null
+  return data ? normalizeReview(data) : null
 }
 
 /**
- * Submit a new review.
- * Rules:
- * - One review per userId per professional
- * - Professionals cannot self-review (compare userId with profesional.id)
- * - 5★ → +10XP, 4★ → +5XP, ≤3★ → 0XP (uses PROF_XP_RULES.GENUINE_REVIEW as 5★ cap)
- * - XP is deduplicated via refId review-${reviewId}
+ * Submit a new review via the secure RPC.
+ * Handles XP award, activity logging, and self-review prevention server-side.
+ * Returns { success, reviewId, xpAwarded, error }.
  */
-export function submitReview({ userId, userName, professionalId, rating, comment }) {
-  if (!userId) return { success: false, error: 'User identity required.' }
+export async function submitReview({ professionalId, rating, comment = '' }) {
   if (!professionalId) return { success: false, error: 'Professional ID required.' }
-  if (!rating || rating < 1 || rating > 5)
-    return { success: false, error: 'Rating must be between 1 and 5.' }
+  if (!rating || rating < 1 || rating > 5) return { success: false, error: 'Rating must be between 1 and 5.' }
 
-  // Block self-review: community userId (cu_...) vs professional id (prof_...)
-  // They shouldn't match, but as a guard we also check by email pattern
-  if (userId === professionalId) {
-    return { success: false, error: 'Professionals cannot review their own profile.' }
+  const { data: authData } = await supabase.auth.getSession()
+  if (!authData?.session?.user?.id) return { success: false, error: 'User identity required.' }
+
+  const { data, error } = await supabase.rpc('submit_prof_review', {
+    p_professional_id: professionalId,
+    p_rating: rating,
+    p_comment: comment,
+  })
+
+  if (error) {
+    return { success: false, error: error.message }
   }
 
-  // One review per user per professional
-  const existing = getUserReviewForProfessional(userId, professionalId)
-  if (existing) {
-    return {
-      success: false,
-      error: 'You have already reviewed this professional. Use Edit to update your review.',
-    }
+  if (!data?.success) {
+    return { success: false, error: data?.error || 'Failed to submit review.' }
   }
 
-  const review = {
-    id: `rev_${generateId()}`,
-    userId,
-    userName: (userName || 'Community Member').trim(),
-    professionalId,
-    rating: Number(rating),
-    comment: (comment || '').trim(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+  return {
+    success: true,
+    reviewId: data.review_id,
+    xpAwarded: data.xp_awarded ?? 0,
   }
-
-  const all = getAllReviews()
-  all.push(review)
-  saveAllReviews(all)
-
-  // Award XP based on star rating — only on initial submission
-  const xpAmount = review.rating === 5 ? PROF_XP_RULES.GENUINE_REVIEW
-    : review.rating === 4 ? Math.floor(PROF_XP_RULES.GENUINE_REVIEW / 2)
-    : 0
-
-  if (xpAmount > 0) {
-    awardProfXP({
-      professionalId,
-      amount: xpAmount,
-      source: 'GENUINE_REVIEW',
-      refId: `review-${review.id}`,
-      description: `${review.rating}★ verified review from ${review.userName}`,
-    })
-  }
-
-  return { success: true, review }
 }
 
 /**
  * Edit an existing review (comment and/or rating).
- * Does NOT award additional XP — XP refId stays tied to original reviewId.
+ * Does NOT award additional XP — XP is tied to the original review.
  */
-export function editReview({ reviewId, userId, rating, comment }) {
-  if (!reviewId || !userId) return { success: false, error: 'Review ID and user required.' }
-  if (!rating || rating < 1 || rating > 5)
-    return { success: false, error: 'Rating must be between 1 and 5.' }
+export async function editReview({ reviewId, rating, comment = '' }) {
+  if (!reviewId) return { success: false, error: 'Review ID required.' }
+  if (!rating || rating < 1 || rating > 5) return { success: false, error: 'Rating must be between 1 and 5.' }
 
-  const all = getAllReviews()
-  const idx = all.findIndex((r) => r.id === reviewId)
-  if (idx === -1) return { success: false, error: 'Review not found.' }
-  if (all[idx].userId !== userId) return { success: false, error: 'Unauthorized.' }
+  const { data, error } = await supabase
+    .from('professional_reviews')
+    .update({ rating, comment: comment.trim() })
+    .eq('id', reviewId)
+    .select()
+    .maybeSingle()
 
-  all[idx] = {
-    ...all[idx],
-    rating: Number(rating),
-    comment: (comment || '').trim(),
-    updatedAt: new Date().toISOString(),
-  }
+  if (error) return { success: false, error: error.message }
+  if (!data) return { success: false, error: 'Review not found or not authorized.' }
 
-  saveAllReviews(all)
-  return { success: true, review: all[idx] }
+  return { success: true, review: normalizeReview(data) }
 }
 
 /**
  * Delete a review.
- * XP refId is NOT cleared — prevents delete+resubmit farming.
+ * xp_ref_id is preserved in the DB — prevents delete+resubmit XP farming.
  */
-export function deleteReview({ reviewId, userId }) {
-  if (!reviewId || !userId) return { success: false, error: 'Review ID and user required.' }
+export async function deleteReview({ reviewId }) {
+  if (!reviewId) return { success: false, error: 'Review ID required.' }
 
-  const all = getAllReviews()
-  const review = all.find((r) => r.id === reviewId)
-  if (!review) return { success: false, error: 'Review not found.' }
-  if (review.userId !== userId) return { success: false, error: 'Unauthorized.' }
+  const { error } = await supabase
+    .from('professional_reviews')
+    .delete()
+    .eq('id', reviewId)
 
-  saveAllReviews(all.filter((r) => r.id !== reviewId))
+  if (error) return { success: false, error: error.message }
   return { success: true }
 }
 
 /**
- * Calculate aggregate rating summary for a professional.
- * Returns { avg, total, distribution: {1,2,3,4,5} }
+ * Calculate aggregate rating summary for a professional (synchronous cache fallback).
  */
-export function getRatingSummary(professionalId) {
-  const reviews = getReviewsForProfessional(professionalId)
+export function getRatingSummarySync(professionalId) {
+  const reviews = _reviewsCache.get(professionalId) || []
   const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
   let sum = 0
 
@@ -195,4 +156,37 @@ export function getRatingSummary(professionalId) {
   const avg = total > 0 ? Math.round((sum / total) * 10) / 10 : 0
 
   return { avg, total, distribution }
+}
+
+/**
+ * Calculate aggregate rating summary for a professional.
+ * Returns { avg, total, distribution: {1,2,3,4,5} }
+ */
+export async function getRatingSummary(professionalId) {
+  const reviews = await getReviewsForProfessional(professionalId)
+  const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  let sum = 0
+
+  for (const r of reviews) {
+    const star = Math.min(5, Math.max(1, Math.round(r.rating)))
+    distribution[star] = (distribution[star] || 0) + 1
+    sum += r.rating
+  }
+
+  const total = reviews.length
+  const avg = total > 0 ? Math.round((sum / total) * 10) / 10 : 0
+
+  return { avg, total, distribution }
+}
+
+// ─── Community user identity (legacy compatibility) ────────────────────────────
+// These are kept for pages that still reference them but now use Supabase auth identity.
+
+export function getCommunityUser() {
+  return { id: 'supabase-auth', name: 'Community Member' }
+}
+
+export function setCommunityUserName(name) {
+  // No-op: name is now taken from Supabase profiles table
+  return { id: 'supabase-auth', name }
 }

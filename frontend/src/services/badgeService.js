@@ -1,5 +1,5 @@
 // services/badgeService.js
-// Evaluate badge unlock criteria, persist unlocked badges, and trigger one-time XP awards.
+// Evaluate badge unlock criteria locally for UI display and reconcile server-verified badges.
 
 import { BADGE_DEFINITIONS } from '../data/badges'
 import {
@@ -9,25 +9,26 @@ import {
 import { getTotalCompletedMissionsCount } from './challengeService'
 import { awardXP, getLifetimeXP } from './xpService'
 import { getItem, setItem, STORAGE_KEYS } from './storageService'
+import { syncBadgesFromSupabase } from './syncService'
 
-/**
- * Get the record of unlocked badges from storage.
- */
+export { syncBadgesFromSupabase }
+
 function getUnlockedBadgeRecords() {
-  return getItem(STORAGE_KEYS.BADGE_RECORDS, {})
+  const records = getItem(STORAGE_KEYS.BADGE_RECORDS, {})
+  return records && typeof records === 'object' ? records : {}
 }
 
 /**
- * Evaluate all badge criteria against actual health data.
- * Unlocks badges and awards one-time XP when milestones are met.
+ * Evaluate badge progress against health summary and stored server unlocks.
+ * Pass `{ evaluateOnly: true }` to keep React render side-effect free.
  */
-export function evaluateBadges() {
+export function evaluateBadges({ evaluateOnly = false } = {}) {
   const healthSummary = getLifetimeHealthSummary()
   const todayWater = todayWaterTotal()
   const totalCompletedMissions = getTotalCompletedMissionsCount()
   const lifetimeXP = getLifetimeXP()
   const badgeRecords = { ...getUnlockedBadgeRecords() }
-  let newlyUnlocked = false
+  let newlyUnlockedLocal = false
 
   const stats = {
     ...healthSummary,
@@ -41,14 +42,14 @@ export function evaluateBadges() {
     const wasAlreadyUnlocked = Boolean(badgeRecords[badge.id]?.unlocked)
     const isNowUnlocked = wasAlreadyUnlocked || evalResult.isUnlocked
 
-    if (isNowUnlocked && !wasAlreadyUnlocked) {
+    if (!evaluateOnly && isNowUnlocked && !wasAlreadyUnlocked) {
       badgeRecords[badge.id] = {
         unlocked: true,
         unlockedAt: new Date().toISOString(),
+        optimistic: true,
       }
-      newlyUnlocked = true
+      newlyUnlockedLocal = true
 
-      // Trigger one-time XP award
       awardXP({
         amount: badge.reward,
         source: 'BADGE',
@@ -73,7 +74,7 @@ export function evaluateBadges() {
     }
   })
 
-  if (newlyUnlocked) {
+  if (!evaluateOnly && newlyUnlockedLocal) {
     setItem(STORAGE_KEYS.BADGE_RECORDS, badgeRecords)
   }
 
@@ -82,7 +83,6 @@ export function evaluateBadges() {
   const percentComplete = Math.round((unlockedCount / totalBadges) * 100)
   const badgesLeft = totalBadges - unlockedCount
 
-  // Next badge closest to unlocking
   const lockedBadges = evaluatedBadges.filter((b) => !b.unlocked)
   const nextBadge =
     lockedBadges.length > 0
@@ -101,11 +101,7 @@ export function evaluateBadges() {
   }
 }
 
-/**
- * Get count of unlocked badges.
- */
 export function getUnlockedBadgesCount() {
   const records = getUnlockedBadgeRecords()
   return Object.values(records).filter((r) => r.unlocked).length
 }
-

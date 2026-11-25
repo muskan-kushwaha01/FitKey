@@ -1,65 +1,59 @@
 // professionalRewardService.js
-// Handles professional reward catalog querying, balance validation, and persistent redemption.
+// Supabase-backed professional reward redemptions.
+// Spends XP and records redemptions via the spend_prof_xp_and_redeem SECURITY DEFINER RPC.
+// Clients cannot directly write to professional_xp_transactions or professional_redemptions.
 
+import { supabase } from '../../lib/supabase.js'
 import { PROFESSIONAL_REWARDS } from '../../data/professionalRewards.js'
-import {
-  getAvailableProfXP,
-  spendProfXP,
-} from './professionalXpService.js'
-import {
-  getItem,
-  setItem,
-  STORAGE_KEYS,
-  generateId,
-} from '../storageService.js'
+import { getAvailableProfXP } from './professionalXpService.js'
+
+// ─── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Retrieve all professional redemptions across all professionals from storage.
+ * Get redemptions for a specific professional from Supabase.
  */
-function getMasterRedemptions() {
-  return getItem(STORAGE_KEYS.PROF_REDEMPTIONS, [])
-}
-
-/**
- * Save master redemptions array.
- */
-function saveMasterRedemptions(list) {
-  return setItem(STORAGE_KEYS.PROF_REDEMPTIONS, list)
-}
-
-/**
- * Get redemptions for a specific professional.
- */
-export function getProfRedemptions(professionalId) {
+export async function getProfRedemptions(professionalId) {
   if (!professionalId) return []
-  const master = getMasterRedemptions()
-  return master
-    .filter((r) => r.professionalId === professionalId)
-    .sort((a, b) => new Date(b.redeemedAt) - new Date(a.redeemedAt))
+
+  const { data, error } = await supabase
+    .from('professional_redemptions')
+    .select('id, reward_id, title, category, points, redeemed_at')
+    .eq('professional_id', professionalId)
+    .order('redeemed_at', { ascending: false })
+
+  if (error) {
+    console.warn('[professionalRewardService] getProfRedemptions error:', error.message)
+    return []
+  }
+
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    professionalId,
+    rewardId: r.reward_id,
+    title: r.title,
+    category: r.category,
+    points: r.points,
+    redeemedAt: r.redeemed_at,
+  }))
 }
 
 /**
  * Get list of reward IDs claimed by a professional.
  */
-export function getClaimedRewardIds(professionalId) {
-  const redemptions = getProfRedemptions(professionalId)
+export async function getClaimedRewardIds(professionalId) {
+  const redemptions = await getProfRedemptions(professionalId)
   return redemptions.map((r) => r.rewardId)
 }
 
 /**
  * Get the professional reward catalog enriched with current affordability and claimed status.
+ * Requires availableXP as a parameter (read from cache or passed in).
  */
-export function getProfRewardCatalog(professionalId) {
-  const availableXP = getAvailableProfXP(professionalId)
-  const claimedIds = getClaimedRewardIds(professionalId)
-
+export function buildProfRewardCatalog(availableXP, claimedIds) {
   return PROFESSIONAL_REWARDS.map((reward) => {
     const isClaimed = claimedIds.includes(reward.id)
     const canAfford = availableXP >= reward.points
-    const progressPercent = Math.min(
-      100,
-      Math.round((availableXP / reward.points) * 100)
-    )
+    const progressPercent = Math.min(100, Math.round((availableXP / reward.points) * 100))
     const xpNeeded = Math.max(0, reward.points - availableXP)
 
     return {
@@ -74,9 +68,23 @@ export function getProfRewardCatalog(professionalId) {
 }
 
 /**
- * Redeem a professional reward.
+ * Get the professional reward catalog from Supabase (async, authoritative).
  */
-export function redeemProfReward(professionalId, rewardId) {
+export async function getProfRewardCatalog(professionalId) {
+  const [claimed, xpSummary] = await Promise.all([
+    getClaimedRewardIds(professionalId),
+    supabase.rpc('get_prof_xp_summary').then(({ data }) => data),
+  ])
+
+  const availableXP = xpSummary?.available_xp ?? 0
+  return buildProfRewardCatalog(availableXP, claimed)
+}
+
+/**
+ * Redeem a professional reward.
+ * Calls the spend_prof_xp_and_redeem SECURITY DEFINER RPC — atomic XP deduction + redemption record.
+ */
+export async function redeemProfReward(professionalId, rewardId) {
   if (!professionalId) {
     return { success: false, reason: 'NO_PROFESSIONAL_ID', message: 'Professional session required.' }
   }
@@ -86,61 +94,29 @@ export function redeemProfReward(professionalId, rewardId) {
     return { success: false, reason: 'NOT_FOUND', message: 'Reward item not found.' }
   }
 
-  // Prevent duplicate redemption
-  const claimedIds = getClaimedRewardIds(professionalId)
-  if (claimedIds.includes(rewardId)) {
-    return {
-      success: false,
-      reason: 'ALREADY_REDEEMED',
-      message: 'You have already redeemed this benefit.',
-    }
-  }
-
-  // Check available XP balance
-  const availableXP = getAvailableProfXP(professionalId)
-  if (availableXP < reward.points) {
-    return {
-      success: false,
-      reason: 'INSUFFICIENT_XP',
-      message: `You need ${reward.points - availableXP} more XP to redeem this reward.`,
-    }
-  }
-
-  // Deduct XP through the professional transaction ledger
-  const spendResult = spendProfXP({
-    professionalId,
-    amount: reward.points,
-    refId: `prof-redeem-${reward.id}-${generateId()}`,
-    description: `Redeemed ${reward.title}`,
+  const { data, error } = await supabase.rpc('spend_prof_xp_and_redeem', {
+    p_reward_id: reward.id,
+    p_title: reward.title,
+    p_category: reward.category || 'General',
+    p_points: reward.points,
   })
 
-  if (!spendResult.success) {
+  if (error) {
+    return { success: false, reason: error.code || 'RPC_ERROR', message: error.message }
+  }
+
+  if (!data?.success) {
     return {
       success: false,
-      reason: spendResult.reason,
-      message: spendResult.message || 'Failed to deduct XP for redemption.',
+      reason: data?.reason || 'FAILED',
+      message: data?.message || 'Failed to redeem reward.',
+      availableXP: data?.available_xp,
     }
   }
-
-  // Persist redemption record
-  const master = getMasterRedemptions()
-  const record = {
-    id: `pred_${generateId()}`,
-    professionalId,
-    rewardId: reward.id,
-    title: reward.title,
-    category: reward.category,
-    points: reward.points,
-    redeemedAt: new Date().toISOString(),
-  }
-
-  master.push(record)
-  saveMasterRedemptions(master)
 
   return {
     success: true,
-    redemption: record,
-    availableXP: spendResult.availableXP,
-    message: `Successfully redeemed "${reward.title}"!`,
+    availableXP: data.available_xp ?? 0,
+    message: data.message || `Successfully redeemed "${reward.title}"!`,
   }
 }

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import {
-    IndianRupee,
     TrendingUp,
     Percent,
     Wallet,
@@ -9,10 +8,9 @@ import {
     CheckCircle2,
     Settings,
 } from 'lucide-react'
-import { getCurrentProfessional } from '../../../services/professional/professionalAuthService.js'
 import {
-    getEarningsSummary,
-    getPayoutSettings,
+    fetchEarningsSummary,
+    fetchPayoutSettings,
 } from '../../../services/professional/professionalConsultationService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
@@ -24,11 +22,30 @@ export default function ConsultationEarnings() {
     const [payoutSettings, setPayoutSettings] = useState(null)
 
     useEffect(() => {
-        const prof = contextProf || getCurrentProfessional()
+        const prof = contextProf
         if (prof?.id) {
             setProfessional(prof)
-            setSummary(getEarningsSummary(prof.id))
-            setPayoutSettings(getPayoutSettings(prof.id))
+            Promise.all([
+                fetchEarningsSummary(prof.id),
+                fetchPayoutSettings(prof.id),
+            ]).then(([summary, payout]) => {
+                setSummary(summary?.summary || {
+                    grossEarnings: 0,
+                    completedCount: 0,
+                    platformFee: 0,
+                    netEarnings: 0,
+                    pendingPayout: 0,
+                    completedPayouts: 0,
+                    history: [],
+                })
+                setPayoutSettings(payout?.payoutSettings || null)
+                if (!summary?.success) console.error('[ConsultationEarnings] Earnings load failed:', summary?.error)
+                if (!payout?.success) console.error('[ConsultationEarnings] Payout settings load failed:', payout?.error)
+            }).catch((error) => {
+                console.error('[ConsultationEarnings] Failed to load data:', error)
+                setSummary({ grossEarnings: 0, completedCount: 0, platformFee: 0, netEarnings: 0, pendingPayout: 0, completedPayouts: 0, history: [] })
+                setPayoutSettings(null)
+            })
         }
     }, [contextProf])
 
@@ -94,7 +111,7 @@ export default function ConsultationEarnings() {
                         <p className="text-[11px] text-[#647572]">
                             {payoutSettings?.preferredPayoutMethod === 'upi'
                                 ? `UPI ID: ${payoutSettings?.payoutUpiId || 'Not configured'}`
-                                : `Bank: ${payoutSettings?.bankName || 'HDFC Bank'} · A/C: ${payoutSettings?.accountNumberMasked || '•••• 4892'}`}
+                                : `Bank: ${payoutSettings?.bankName || 'Not configured'} · A/C: ${payoutSettings?.accountNumberMasked || 'Not configured'}`}
                         </p>
                     </div>
                 </div>
@@ -174,7 +191,7 @@ export default function ConsultationEarnings() {
                         ₹{summary.pendingPayout.toLocaleString('en-IN')}
                     </p>
                     <p className="mt-1 text-[10px] text-[#8B6D25] font-medium">
-                        Settling in next cycle (Fri)
+                        Based on your recorded consultation payments
                     </p>
                 </div>
 
@@ -239,7 +256,7 @@ export default function ConsultationEarnings() {
                                         <td className="py-3 text-right">
                                             <span className="inline-flex items-center gap-1 rounded-full bg-[#E4F0EA] px-2 py-0.5 text-[10px] font-bold text-[#033135]">
                                                 <CheckCircle2 size={11} className="text-[#2F7B58]" />
-                                                PROCESSED
+                                                {(tx.status || 'Pending Settlement').toUpperCase()}
                                             </span>
                                         </td>
                                     </tr>

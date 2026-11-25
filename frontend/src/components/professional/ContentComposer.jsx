@@ -10,11 +10,12 @@ import {
     CheckCircle2,
     X,
     AlertCircle,
-    Play,
     Tag,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { CONTENT_CATEGORIES } from '../../data/contentCategories.js'
+
+const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 const inputClass =
     'w-full rounded-xl border border-[#DCE7E3] bg-[#F8FAF7] px-4 py-3 text-xs sm:text-sm outline-none transition placeholder:text-[#9AA6A0] focus:border-[#648C83] focus:bg-white focus:ring-2 focus:ring-[#E4F0EA]'
@@ -46,7 +47,25 @@ export function ContentComposer({
     const [content, setContent] = useState(initialData?.content || '')
     const [coverImage, setCoverImage] = useState(initialData?.coverImage || '')
     const [videoUrl, setVideoUrl] = useState(initialData?.videoUrl || '')
+    const [coverImageFile, setCoverImageFile] = useState(null)
+    const [videoFile, setVideoFile] = useState(null)
     const [showPreview, setShowPreview] = useState(false)
+
+    const setCoverImageFromUrl = (url) => {
+        setCoverImage(url)
+        setCoverImageFile(null)
+    }
+    const setVideoUrlFromUrl = (url) => {
+        setVideoUrl(url)
+        setVideoFile(null)
+    }
+
+    useEffect(() => () => {
+        if (coverImage.startsWith('blob:')) URL.revokeObjectURL(coverImage)
+    }, [coverImage])
+    useEffect(() => () => {
+        if (videoUrl.startsWith('blob:')) URL.revokeObjectURL(videoUrl)
+    }, [videoUrl])
 
     // Handle local file selection for image preview
     const handleImageFileChange = (e) => {
@@ -54,7 +73,9 @@ export function ContentComposer({
         if (file) {
             try {
                 const localUrl = URL.createObjectURL(file)
+                if (coverImage.startsWith('blob:')) URL.revokeObjectURL(coverImage)
                 setCoverImage(localUrl)
+                setCoverImageFile(file)
                 toast.success(`Image selected: ${file.name}`)
             } catch {
                 toast.error('Unable to generate local preview.')
@@ -68,7 +89,9 @@ export function ContentComposer({
         if (file) {
             try {
                 const localUrl = URL.createObjectURL(file)
+                if (videoUrl.startsWith('blob:')) URL.revokeObjectURL(videoUrl)
                 setVideoUrl(localUrl)
+                setVideoFile(file)
                 toast.success(`Video selected: ${file.name}`)
             } catch {
                 toast.error('Unable to generate local video preview.')
@@ -128,6 +151,8 @@ export function ContentComposer({
             content,
             coverImage: coverImage || (type === 'article' ? SAMPLE_COVERS[0] : ''),
             videoUrl,
+            coverImageFile,
+            videoFile,
         }
 
         if (onSubmit) onSubmit(postData)
@@ -217,7 +242,7 @@ export function ContentComposer({
                                     <img src={coverImage} alt="Cover preview" className="h-full w-full object-cover" />
                                     <button
                                         type="button"
-                                        onClick={() => setCoverImage('')}
+                                        onClick={() => setCoverImageFromUrl('')}
                                         className="absolute right-2 top-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
                                     >
                                         <X size={14} />
@@ -240,7 +265,7 @@ export function ContentComposer({
                                 <input
                                     type="url"
                                     value={coverImage}
-                                    onChange={(e) => setCoverImage(e.target.value)}
+                                    onChange={(e) => setCoverImageFromUrl(e.target.value)}
                                     placeholder="Or paste image URL (https://...)"
                                     className="flex-1 rounded-xl border border-[#DCE7E3] bg-[#F8FAF7] px-3.5 py-2.5 text-xs outline-none focus:border-[#648C83]"
                                 />
@@ -254,7 +279,7 @@ export function ContentComposer({
                                         <button
                                             key={i}
                                             type="button"
-                                            onClick={() => setCoverImage(url)}
+                                            onClick={() => setCoverImageFromUrl(url)}
                                             className="h-7 w-10 overflow-hidden rounded-md border border-[#DCE7E3] opacity-70 hover:opacity-100 transition"
                                         >
                                             <img src={url} alt={`Preset ${i + 1}`} className="h-full w-full object-cover" />
@@ -308,7 +333,7 @@ export function ContentComposer({
                                     <video src={videoUrl} controls className="h-full w-full object-contain" />
                                     <button
                                         type="button"
-                                        onClick={() => setVideoUrl('')}
+                                        onClick={() => setVideoUrlFromUrl('')}
                                         className="absolute right-2 top-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
                                     >
                                         <X size={14} />
@@ -330,7 +355,7 @@ export function ContentComposer({
 
                                 <button
                                     type="button"
-                                    onClick={() => setVideoUrl(SAMPLE_REEL_VIDEOS[0])}
+                                    onClick={() => setVideoUrlFromUrl(SAMPLE_REEL_VIDEOS[0])}
                                     className="rounded-xl border border-[#DCE7E3] bg-[#FAFBF9] px-4 py-3 text-xs font-semibold text-[#033135] hover:bg-[#E4F0EA] transition"
                                 >
                                     Use Sample Reel Video
@@ -346,7 +371,7 @@ export function ContentComposer({
                             <input
                                 type="url"
                                 value={coverImage}
-                                onChange={(e) => setCoverImage(e.target.value)}
+                                onChange={(e) => setCoverImageFromUrl(e.target.value)}
                                 placeholder="Paste image thumbnail URL (https://...)"
                                 className={inputClass}
                             />
@@ -412,7 +437,7 @@ export function ContentComposer({
                                 <input
                                     type="url"
                                     value={coverImage}
-                                    onChange={(e) => setCoverImage(e.target.value)}
+                                    onChange={(e) => setCoverImageFromUrl(e.target.value)}
                                     placeholder="Or paste chart/image URL"
                                     className="flex-1 rounded-xl border border-[#DCE7E3] bg-[#F8FAF7] px-3 py-2 text-xs outline-none focus:border-[#648C83]"
                                 />

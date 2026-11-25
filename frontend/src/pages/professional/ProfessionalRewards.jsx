@@ -17,7 +17,7 @@ import {
     redeemProfReward,
     getProfRedemptions,
 } from '../../services/professional/professionalRewardService.js'
-import { getAvailableProfXP } from '../../services/professional/professionalXpService.js'
+import { getProfXPSummaryAsync } from '../../services/professional/professionalXpService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -30,22 +30,23 @@ function ProfessionalRewards() {
     const [selectedCategory, setSelectedCategory] = useState('All')
     const [redeemingId, setRedeemingId] = useState(null)
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!professional) return
-        const catalog = getProfRewardCatalog(professional.id)
-        const history = getProfRedemptions(professional.id)
-        const balance = getAvailableProfXP(professional.id)
-
-        setRewards(catalog)
-        setRedemptions(history)
-        setAvailableXP(balance)
+        const [catalog, history, xpSummary] = await Promise.all([
+            getProfRewardCatalog(professional.id),
+            getProfRedemptions(professional.id),
+            getProfXPSummaryAsync(professional.id),
+        ])
+        setRewards(Array.isArray(catalog) ? catalog : [])
+        setRedemptions(Array.isArray(history) ? history : [])
+        setAvailableXP(xpSummary?.availableXP ?? 0)
     }, [professional])
 
     useEffect(() => {
         loadData()
     }, [loadData])
 
-    const handleRedeem = (item) => {
+    const handleRedeem = async (item) => {
         if (!professional) return
 
         if (item.isClaimed) {
@@ -59,12 +60,12 @@ function ProfessionalRewards() {
         }
 
         setRedeemingId(item.id)
-        const res = redeemProfReward(professional.id, item.id)
+        const res = await redeemProfReward(professional.id, item.id)
         setRedeemingId(null)
 
         if (res.success) {
             toast.success(res.message, { icon: '🎉' })
-            loadData() // Refresh balances and claimed statuses immediately
+            loadData()
         } else {
             toast.error(res.message || 'Failed to redeem reward.')
         }

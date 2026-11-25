@@ -10,14 +10,14 @@ function CreateContent() {
     const navigate = useNavigate()
     const { professional } = useOutletContext() || {}
 
-    const handleSubmit = (postData) => {
+    const handleSubmit = async (postData) => {
         if (!professional) {
             toast.error('Session expired. Please log in again.')
             navigate('/professional/login')
             return
         }
 
-        const res = createPost({
+        const res = await createPost({
             ...postData,
             authorId: professional.id,
             authorName: professional.fullName || professional.name || 'Verified Professional',

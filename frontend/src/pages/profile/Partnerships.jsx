@@ -7,6 +7,7 @@ import {
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
+// Demo partner campaigns stay visible until a live partner campaign source exists.
 const campaigns = [
     {
         brand: 'Wellness Essentials',
@@ -181,12 +182,9 @@ function Partnerships() {
                             Featured campaigns
                         </h2>
                         <p className="mt-1 text-sm text-[#647572]">
-                            {visibleCampaigns.length} {visibleCampaigns.length === 1 ? 'offer' : 'offers'} from our demo brand partners
+                            {visibleCampaigns.length} {visibleCampaigns.length === 1 ? 'offer' : 'offers'} from demo brand partners
                         </p>
                     </div>
-                    <span className="shrink-0 rounded-full bg-[#F8E7A5] px-3 py-1 text-xs font-semibold text-[#033135]">
-                        Sponsored
-                    </span>
                 </div>
 
                 <div className="grid gap-5 lg:grid-cols-2">
@@ -258,6 +256,12 @@ function Partnerships() {
                         )
                     })}
                 </div>
+                {visibleCampaigns.length === 0 && (
+                    <div className="rounded-3xl border border-dashed border-[#C4D7D4] bg-white p-10 text-center">
+                        <p className="text-sm font-semibold text-[#033135]">No active partnerships</p>
+                        <p className="mt-1 text-xs text-[#647572]">Offers will appear here after a partner publishes a campaign.</p>
+                    </div>
+                )}
             </section>
 
             {/* Footer note */}

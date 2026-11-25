@@ -1,89 +1,154 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useOutletContext, Link } from 'react-router-dom'
 import {
     Clock,
     ShieldCheck,
-    Stethoscope,
+    AlertTriangle,
+    CheckCircle2,
     Building2,
     MapPin,
     Zap,
     FileText,
     Eye,
     Heart,
-    MessageSquare,
     Star,
     PlusCircle,
     UserRound,
     Trophy,
     ArrowRight,
     TrendingUp,
-    Sparkles,
-    CheckCircle2,
-    Crown,
     Share2,
     Gift,
     PhoneCall,
+    MessageSquare,
+    Loader2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+import { fetchAppointments } from '../../services/professional/professionalConsultationService.js'
+import { supabase } from '../../lib/supabase.js'
+import { loadProfXPData, getAvailableProfXP } from '../../services/professional/professionalXpService.js'
+import { loadLeaderboard, getLeaderboardRankings, getProfessionalRank } from '../../services/professional/professionalLeaderboardService.js'
+import { isMigrationDone, runProfessionalMigration } from '../../services/professional/professionalMigrationService.js'
 import { getPosts } from '../../services/professional/professionalContentService.js'
-import { getAvailableProfXP } from '../../services/professional/professionalXpService.js'
-import { getLeaderboardRankings, getProfessionalRank } from '../../services/professional/professionalLeaderboardService.js'
-import { getReviewsForProfessional } from '../../services/professional/professionalReviewService.js'
-import { getAppointments } from '../../services/professional/professionalConsultationService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
-// Demo activity feed for professional interactions
-const DEMO_ACTIVITIES = [
-    {
-        id: 1,
-        type: 'like',
-        icon: Heart,
-        iconColor: 'text-[#C0563B]',
-        iconBg: 'bg-[#FFD9C7]',
-        text: 'Aarav Sharma and 14 others liked your guide "Daily Micro-Habits for Cardiac Health".',
-        time: '35m ago',
-    },
-    {
-        id: 2,
-        type: 'comment',
-        icon: MessageSquare,
-        iconColor: 'text-[#324C4D]',
-        iconBg: 'bg-[#E4F0EA]',
-        text: 'Dr. Rajesh Kumar commented: "Excellent breakdown of glycemic index vs glycemic load."',
-        time: '2h ago',
-    },
-    {
-        id: 3,
-        type: 'review',
-        icon: Star,
-        iconColor: 'text-[#8B6D25]',
-        iconBg: 'bg-[#F8E7A5]',
-        text: '5-star peer recommendation received from Priya Nair (Clinical Nutritionist).',
-        time: 'Yesterday',
-    },
-    {
-        id: 4,
-        type: 'verification',
-        icon: ShieldCheck,
-        iconColor: 'text-[#2F7B58]',
-        iconBg: 'bg-[#E4F0EA]',
-        text: 'Document checkpoint: State Medical Council registration uploaded.',
-        time: '2 days ago',
-    },
-]
+// ─── Verification status helpers ─────────────────────────────────────────────
 
-// Demo top leaders preview
-const DEMO_LEADER_PREVIEW = [
-    { rank: 1, name: 'Dr. Sneha Roy', specialty: 'Functional Medicine', xp: 2450, initials: 'SR' },
-    { rank: 2, name: 'Dr. Arjun Patel', specialty: 'Orthopedics & Sports', xp: 2180, initials: 'AP' },
-    { rank: 3, name: 'Dr. Ananya Sharma', specialty: 'Cardiology', xp: 1920, initials: 'AS' },
-]
+function resolveVerificationState(raw) {
+    const s = String(raw || '').toLowerCase().trim()
+    if (s === 'verified practitioner' || s === 'verified' || s === 'approved') {
+        return 'verified'
+    }
+    if (s === 'rejected') return 'rejected'
+    return 'pending'
+}
+
+function VerificationBanner({ verificationStatus }) {
+    const state = resolveVerificationState(verificationStatus)
+    const rawStatus = String(verificationStatus || 'Pending Verification').trim()
+    const statusLabel = state === 'verified'
+        ? 'Verified Practitioner'
+        : state === 'rejected'
+            ? 'Rejected'
+            : rawStatus.toLowerCase() === 'pending' ? 'Pending Verification' : rawStatus
+
+    if (state === 'verified') {
+        return (
+            <section className="relative overflow-hidden rounded-2xl border border-[#2F7B58]/30 bg-gradient-to-r from-[#E4F0EA]/60 via-[#F8FAF7] to-[#E4F0EA]/40 p-4 sm:p-5 shadow-xs">
+                <div className="flex items-center gap-3.5">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#E4F0EA] text-[#2F7B58] shadow-xs">
+                        <CheckCircle2 size={22} />
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-sm font-bold text-[#033135]">
+                                Profile Verification: {statusLabel}
+                            </h3>
+                            <span className="rounded-full bg-[#E4F0EA] px-2.5 py-0.5 text-[10px] font-black text-[#2F7B58] uppercase tracking-wide">
+                                Active
+                            </span>
+                        </div>
+                        <p className="mt-1 text-xs text-[#647572] max-w-2xl leading-relaxed">
+                            Your credentials are verified. All professional features are fully active.
+                        </p>
+                    </div>
+                </div>
+            </section>
+        )
+    }
+
+    if (state === 'rejected') {
+        return (
+            <section className="relative overflow-hidden rounded-2xl border border-[#C0563B]/30 bg-gradient-to-r from-[#FFD9C7]/30 via-[#F8FAF7] to-[#FFD9C7]/20 p-4 sm:p-5 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#FFD9C7] text-[#C0563B] shadow-xs">
+                            <AlertTriangle size={22} />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-sm font-bold text-[#033135]">
+                                    Verification: Documents Not Accepted
+                                </h3>
+                                <span className="rounded-full bg-[#FFD9C7] px-2.5 py-0.5 text-[10px] font-black text-[#C0563B] uppercase tracking-wide">
+                                    Action Required
+                                </span>
+                            </div>
+                            <p className="mt-1 text-xs text-[#647572] max-w-2xl leading-relaxed">
+                                Your submitted documents could not be verified. Please update your profile with valid credentials and resubmit.
+                            </p>
+                        </div>
+                    </div>
+                    <Link
+                        to="/professional/profile"
+                        className="flex items-center gap-1.5 self-start sm:self-auto rounded-xl bg-[#C0563B] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#A54530] transition shrink-0"
+                    >
+                        <ShieldCheck size={14} />
+                        <span>Update Documents</span>
+                    </Link>
+                </div>
+            </section>
+        )
+    }
+
+    // pending (default)
+    return (
+        <section className="relative overflow-hidden rounded-2xl border border-[#E0AE3A]/40 bg-gradient-to-r from-[#F8E7A5]/40 via-[#F8FAF7] to-[#E4F0EA]/50 p-4 sm:p-5 shadow-xs">
+            <div className="flex items-start gap-3.5">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#F8E7A5] text-[#8B6D25] shadow-xs">
+                    <Clock size={22} />
+                </div>
+                <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm font-bold text-[#033135]">
+                                Profile Verification: {statusLabel}
+                        </h3>
+                        <span className="rounded-full bg-[#F8E7A5] px-2.5 py-0.5 text-[10px] font-black text-[#8B6D25] uppercase tracking-wide">
+                            Pending
+                        </span>
+                    </div>
+                    <p className="mt-1 text-xs text-[#647572] max-w-2xl leading-relaxed">
+                        Your qualifications and documents are securely recorded and are being reviewed by our clinical team. Consultation bookings will be enabled once verified.
+                    </p>
+                </div>
+            </div>
+        </section>
+    )
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 function ProfessionalHome() {
     const navigate = useNavigate()
     const { professional } = useOutletContext() || {}
+    const isMountedRef = useRef(true)
+
+    useEffect(() => {
+        isMountedRef.current = true
+        return () => { isMountedRef.current = false }
+    }, [])
 
     const displayName = professional?.fullName || professional?.name || 'Doctor'
     const profession = professional?.profession || 'Healthcare Professional'
@@ -91,50 +156,124 @@ function ProfessionalHome() {
     const workplace = professional?.workplaceName || 'Private Practice Clinic'
     const city = professional?.city || 'India'
     const state = professional?.state || ''
+    const verificationStatus = professional?.verificationStatus || 'Pending Verification'
 
-    // Dynamic posts count & live XP balance
-    const authorPosts = professional ? getPosts({ professionalId: professional.id }) : []
-    const publishedCount = authorPosts.length
-    const liveXP = professional ? getAvailableProfXP(professional.id) : 0
+    // ── Dashboard summary from Supabase (async) ──
+    const [dashSummary, setDashSummary] = useState(null)
+    const [dashboardPosts, setDashboardPosts] = useState([])
+    const [dashLoading, setDashLoading] = useState(false)
+    const [dashError, setDashError] = useState(null)
 
-    // Dynamic rankings with fallback
-    const rankings = getLeaderboardRankings()
-    const myRankEntry = professional ? getProfessionalRank(professional.id) : null
-    const top3 = rankings.length > 0
-        ? rankings.slice(0, 3).map((r) => ({
-            id: r.professional?.id || `leader-${r.rank}`,
-            rank: r.rank,
-            name: r.professional?.fullName || r.professional?.name || 'Verified Practitioner',
-            specialty: r.professional?.specialization || r.professional?.profession || 'Specialist',
-            xp: r.lifetimeXP || 0,
-        }))
-        : DEMO_LEADER_PREVIEW.map((d) => ({
-            id: `demo-${d.rank}`,
-            rank: d.rank,
-            name: d.name,
-            specialty: d.specialty,
-            xp: d.xp,
-        }))
+    // ── XP (async from Supabase, cached sync fallback) ──
+    const [liveXP, setLiveXP] = useState(() => getAvailableProfXP(professional?.id))
 
-    // Dynamic reviews
-    const recentReviews = professional ? getReviewsForProfessional(professional.id) : []
-    const reviewActivities = recentReviews.slice(0, 2).map((r) => ({
-        id: `rev-${r.id}`,
-        type: 'review',
-        icon: Star,
-        iconColor: 'text-[#8B6D25]',
-        iconBg: 'bg-[#F8E7A5]',
-        text: `${r.rating}★ review from ${r.userName}: "${(r.comment || 'Verified review').slice(0, 60)}"`,
-        time: 'Recent',
-    }))
-    const activities = [...reviewActivities, ...DEMO_ACTIVITIES].slice(0, 4)
+    // ── Leaderboard (async from Supabase, cached sync fallback) ──
+    const [myRankEntry, setMyRankEntry] = useState(() => getProfessionalRank(professional?.id))
+    const [top3, setTop3] = useState(() => getLeaderboardRankings().slice(0, 3).map((r) => ({
+        id: r.professional?.id || `leader-${r.rank}`,
+        rank: r.rank,
+        name: r.professional?.fullName || r.professional?.name || 'Verified Practitioner',
+        specialty: r.professional?.specialization || 'Specialist',
+        xp: r.availableXP || 0,
+    })))
 
-    // Upcoming consultation appointments
-    const upcomingAppointments = professional ? getAppointments(professional.id, { status: 'upcoming' }) : []
+    // ── Upcoming appointments (Supabase, async) ──
+    const [upcomingAppointments, setUpcomingAppointments] = useState([])
+    const [aptsLoading, setAptsLoading] = useState(false)
+    const [aptsError, setAptsError] = useState(null)
 
-    const handleCreateContent = () => {
-        navigate('/professional/content/create')
-    }
+    // ── Load all dashboard data ──
+    useEffect(() => {
+        if (!professional?.id) return
+
+        // Run legacy migration once silently in background
+        if (!isMigrationDone(professional.id)) {
+            runProfessionalMigration(professional.id).catch(() => { /* silent */ })
+        }
+
+        setDashLoading(true)
+        setAptsLoading(true)
+        setDashError(null)
+        setAptsError(null)
+
+        // Parallel: dashboard summary + appointments + XP + leaderboard
+        const dashPromise = Promise.all([
+            supabase.rpc('get_prof_dashboard_summary'),
+            getPosts({ professionalId: professional.id }),
+        ]).then(([{ data, error }, posts]) => {
+            if (!isMountedRef.current) return
+            if (!error && data?.success) {
+                setDashSummary(data)
+            } else {
+                setDashError(error?.message || 'Failed to load dashboard data.')
+            }
+            setDashboardPosts(posts)
+            setDashLoading(false)
+        }).catch((error) => {
+            if (!isMountedRef.current) return
+            setDashError(error?.message || 'Failed to load professional content.')
+            setDashLoading(false)
+        })
+
+        const xpPromise = loadProfXPData(professional.id).then((result) => {
+            if (!isMountedRef.current) return
+            if (result?.success) setLiveXP(result.availableXP ?? 0)
+        })
+
+        const boardPromise = loadLeaderboard(20).then((result) => {
+            if (!isMountedRef.current) return
+            if (result?.success) {
+                const myEntry = result.entries.find((e) => e.professionalId === professional.id)
+                if (myEntry) {
+                    setMyRankEntry({ rank: myEntry.rank, score: myEntry.score, lifetimeXP: myEntry.lifetimeXP })
+                }
+                setTop3(result.entries.slice(0, 3).map((e) => ({
+                    id: e.professionalId,
+                    rank: e.rank,
+                    name: e.fullName,
+                    specialty: e.specialization,
+                    xp: e.availableXP,
+                })))
+            }
+        })
+
+        fetchAppointments(professional.id, { status: 'upcoming' })
+            .then((result) => {
+                if (!isMountedRef.current) return
+                if (result?.success && Array.isArray(result.appointments)) {
+                    const upcoming = result.appointments.filter(
+                        (a) => a.status === 'upcoming' || a.rawStatus === 'upcoming' || a.rawStatus === 'confirmed'
+                    )
+                    setUpcomingAppointments(upcoming)
+                } else {
+                    setUpcomingAppointments([])
+                    if (result?.error) setAptsError(result.error)
+                }
+            })
+            .catch(() => {
+                if (!isMountedRef.current) return
+                setUpcomingAppointments([])
+                setAptsError('Could not load appointments.')
+            })
+            .finally(() => {
+                if (isMountedRef.current) setAptsLoading(false)
+            })
+
+        return () => { /* cleanup handled by isMountedRef */ }
+    }, [professional?.id])
+
+    // ── Computed values from dashboard summary ──
+    const publishedCount = dashboardPosts.length
+    const approvedCount = dashboardPosts.filter((post) => post.approvalStatus === 'approved' && post.isPublished).length
+    const totalViews = dashboardPosts.reduce((sum, post) => sum + Number(post.viewsCount || 0), 0)
+    const totalLikes = dashboardPosts.reduce((sum, post) => sum + Number(post.likesCount || 0), 0)
+    const reviewCount = dashSummary?.review_count ?? 0
+    const avgRating = Number(dashSummary?.avg_rating ?? 0)
+    const recentReviews = Array.isArray(dashSummary?.recent_reviews) ? dashSummary.recent_reviews : []
+    const recentActivities = Array.isArray(dashSummary?.recent_activities) ? dashSummary.recent_activities : []
+
+    // ── Actions ──
+    const handleCreateContent = () => navigate('/professional/content/create')
 
     const handleSharePractice = () => {
         if (navigator.clipboard) {
@@ -147,23 +286,20 @@ function ProfessionalHome() {
 
     return (
         <div className="space-y-6 sm:space-y-7">
-            {/* 1. Header Greeting Section */}
+            {/* 1. Header Greeting */}
             <section className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-
                     <h1
                         className="mt-1 text-2xl sm:text-3xl lg:text-4xl text-[#033135] font-normal"
                         style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
                     >
                         Welcome back, <span className="font-bold">{displayName}</span>
                     </h1>
-
                     <p className="mt-1 text-xs sm:text-sm text-[#647572]">
                         {profession} · <span className="font-medium text-[#324C4D]">{specialization}</span> · {workplace}
                     </p>
                 </div>
 
-                {/* Quick actions top pill */}
                 <div className="flex items-center gap-2.5 self-start sm:self-auto">
                     <button
                         onClick={handleCreateContent}
@@ -183,46 +319,28 @@ function ProfessionalHome() {
                 </div>
             </section>
 
-            {/* 2. Verification Status Alert (with button to move to main home screen) */}
-            <section className="relative overflow-hidden rounded-2xl border border-[#E0AE3A]/40 bg-gradient-to-r from-[#F8E7A5]/40 via-[#F8FAF7] to-[#E4F0EA]/50 p-4 sm:p-5 shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="flex items-start gap-3.5">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#F8E7A5] text-[#8B6D25] shadow-xs">
-                            <Clock size={22} />
-                        </div>
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <h3 className="text-sm font-bold text-[#033135]">
-                                    Profile Verification: Pending Verification
-                                </h3>
-                                <span className="rounded-full bg-[#F8E7A5] px-2.5 py-0.5 text-[10px] font-black text-[#8B6D25] uppercase tracking-wide">
-                                    Under Review
-                                </span>
-                            </div>
-                            <p className="mt-1 text-xs text-[#647572] max-w-2xl leading-relaxed">
-                                Your qualifications and documents are securely recorded. For this prototype, all professional features are accessible in demonstration mode.
-                            </p>
-                        </div>
-                    </div>
+            {/* 2. Verification Status — dynamic, no self-verification */}
+            <VerificationBanner verificationStatus={verificationStatus} />
 
-                    {/* Verification action */}
-                    <div className="flex items-center gap-2 shrink-0">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                toast.success('Verification simulated! You have full access.')
-                            }}
-                            className="flex items-center gap-1.5 rounded-xl bg-[#033135] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#324C4D] transition"
-                        >
-                            <ShieldCheck size={14} className="text-[#F8E7A5]" />
-                            <span>Verify Now</span>
-                        </button>
+            {/* 3. Upcoming Consultations (Supabase) */}
+            {aptsLoading && (
+                <section className="rounded-2xl border border-[#DCE7E3] bg-white p-5 shadow-xs">
+                    <div className="flex items-center gap-2 text-xs text-[#647572]">
+                        <Loader2 size={14} className="animate-spin" />
+                        Loading upcoming consultations…
                     </div>
-                </div>
-            </section>
+                </section>
+            )}
 
-            {/* Upcoming Consultations Section - Only shown when upcoming appointments > 0 */}
-            {upcomingAppointments.length > 0 && (
+            {!aptsLoading && aptsError && (
+                <section className="rounded-2xl border border-[#E8EFEB] bg-white p-4 shadow-xs">
+                    <p className="text-xs text-[#9AA6A0]">
+                        Could not load upcoming appointments. <Link to="/professional/consultations/appointments" className="underline">View all appointments</Link>
+                    </p>
+                </section>
+            )}
+
+            {!aptsLoading && !aptsError && upcomingAppointments.length > 0 && (
                 <section className="rounded-2xl border border-[#DCE7E3] bg-white p-5 shadow-xs">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#E8EFEB] pb-3 mb-4">
                         <div className="flex items-center gap-2.5">
@@ -234,7 +352,7 @@ function ProfessionalHome() {
                                     Upcoming Consultations ({upcomingAppointments.length})
                                 </h3>
                                 <p className="text-[11px] text-[#647572]">
-                                    Scheduled patient phone appointments awaiting consultation.
+                                    Scheduled patient appointments awaiting consultation.
                                 </p>
                             </div>
                         </div>
@@ -273,7 +391,7 @@ function ProfessionalHome() {
                                     className="rounded-lg bg-[#033135] px-3.5 py-1.5 text-[11px] font-bold !text-white hover:bg-[#324C4D] transition shadow-xs"
                                     style={{ color: '#ffffff' }}
                                 >
-                                    Call
+                                    Open
                                 </Link>
                             </div>
                         ))}
@@ -281,9 +399,9 @@ function ProfessionalHome() {
                 </section>
             )}
 
-            {/* 3. Core Metrics Grid (XP, Posts, Views, Engagement) */}
+            {/* 4. Core Metrics Grid — Supabase-backed */}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-                {/* Available XP Balance */}
+                {/* Available XP */}
                 <div
                     onClick={() => navigate('/professional/xp?tab=redeem')}
                     className="group flex flex-col justify-between rounded-2xl border-2 border-[#E0AE3A]/40 bg-gradient-to-br from-[#F8E7A5]/25 via-white to-white p-3.5 sm:p-5 shadow-xs transition hover:shadow-md cursor-pointer"
@@ -298,10 +416,16 @@ function ProfessionalHome() {
                             </div>
                         </div>
                         <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
-                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
-                                {liveXP.toLocaleString()}
-                            </span>
-                            <span className="text-[11px] sm:text-xs font-bold text-[#8B6D25]">XP</span>
+                            {dashLoading ? (
+                                <Loader2 size={18} className="animate-spin text-[#8B6D25]" />
+                            ) : (
+                                <>
+                                    <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                        {liveXP.toLocaleString()}
+                                    </span>
+                                    <span className="text-[11px] sm:text-xs font-bold text-[#8B6D25]">XP</span>
+                                </>
+                            )}
                         </div>
                     </div>
                     <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
@@ -327,21 +451,31 @@ function ProfessionalHome() {
                             </div>
                         </div>
                         <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
-                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
-                                {publishedCount}
-                            </span>
-                            <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">articles & reels</span>
+                            {dashLoading ? (
+                                <Loader2 size={18} className="animate-spin text-[#647572]" />
+                            ) : (
+                                <>
+                                    <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                        {publishedCount}
+                                    </span>
+                                <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">uploaded posts</span>
+                                </>
+                            )}
                         </div>
                     </div>
                     <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
-                        <span className="font-semibold text-[#2F7B58] flex items-center gap-1 truncate">
-                            <TrendingUp size={11} className="shrink-0" /> 2 this month
-                        </span>
+                        {publishedCount > 0 ? (
+                            <span className="font-semibold text-[#2F7B58] flex items-center gap-1 truncate">
+                                <TrendingUp size={11} className="shrink-0" /> {approvedCount} approved
+                            </span>
+                        ) : (
+                            <span className="font-medium text-[#9AA6A0] truncate">No posts yet</span>
+                        )}
                         <span className="text-[#9AA6A0] font-medium hidden xs:inline shrink-0">Active</span>
                     </div>
                 </div>
 
-                {/* Total Content Views */}
+                {/* Content Views (Supabase community_posts.views_count) */}
                 <div
                     onClick={() => navigate('/professional/profile')}
                     className="group flex flex-col justify-between rounded-2xl border border-[#E8EFEB] bg-white p-3.5 sm:p-5 shadow-xs transition hover:shadow-sm cursor-pointer"
@@ -356,21 +490,31 @@ function ProfessionalHome() {
                             </div>
                         </div>
                         <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
-                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
-                                8.4K
-                            </span>
-                            <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">readers</span>
+                            {dashLoading ? (
+                                <Loader2 size={18} className="animate-spin text-[#647572]" />
+                            ) : publishedCount > 0 ? (
+                                <>
+                                    <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                        {totalViews >= 1000
+                                            ? `${(totalViews / 1000).toFixed(1)}K`
+                                            : totalViews.toLocaleString()}
+                                    </span>
+                                    <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">views</span>
+                                </>
+                            ) : (
+                                <span className="text-sm font-semibold text-[#9AA6A0]">—</span>
+                            )}
                         </div>
                     </div>
                     <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
-                        <span className="font-semibold text-[#2F7B58] flex items-center gap-1 truncate">
-                            <TrendingUp size={11} className="shrink-0" /> +18.4%
+                        <span className="font-medium text-[#9AA6A0] truncate">
+                            {publishedCount > 0 ? 'Persistent views' : 'No data yet'}
                         </span>
-                        <span className="text-[#9AA6A0] font-medium hidden xs:inline shrink-0">Growth</span>
+                        <span className="text-[#9AA6A0] font-medium hidden xs:inline shrink-0">Views</span>
                     </div>
                 </div>
 
-                {/* Total Engagement */}
+                {/* Total Likes (Supabase community_posts.likes_count) */}
                 <div
                     onClick={() => navigate('/professional/profile')}
                     className="group flex flex-col justify-between rounded-2xl border border-[#E8EFEB] bg-white p-3.5 sm:p-5 shadow-xs transition hover:shadow-sm cursor-pointer"
@@ -378,24 +522,34 @@ function ProfessionalHome() {
                     <div>
                         <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-bold text-[#647572] truncate">
-                                Total Engagement
+                                Total Likes
                             </span>
                             <div className="flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-xl bg-[#FFD9C7] text-[#A45E45]">
                                 <Heart size={14} className="sm:w-4 sm:h-4" />
                             </div>
                         </div>
                         <div className="mt-2.5 sm:mt-3 flex items-baseline gap-1.5">
-                            <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
-                                1,240
-                            </span>
-                            <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">interactions</span>
+                            {dashLoading ? (
+                                <Loader2 size={18} className="animate-spin text-[#647572]" />
+                            ) : publishedCount > 0 ? (
+                                <>
+                                    <span className="text-2xl sm:text-3xl font-black text-[#033135] tracking-tight leading-none">
+                                        {totalLikes.toLocaleString()}
+                                    </span>
+                                    <span className="text-[11px] sm:text-xs font-medium text-[#647572] truncate">likes</span>
+                                </>
+                            ) : (
+                                <span className="text-sm font-semibold text-[#9AA6A0]">—</span>
+                            )}
                         </div>
                     </div>
                     <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#E8EFEB] text-[10px] sm:text-[11px]">
-                        <span className="font-semibold text-[#647572] flex items-center gap-1 truncate">
-                            <Heart size={11} className="text-[#C0563B] shrink-0" fill="currentColor" /> Likes & notes
+                        <span className="font-medium text-[#647572] flex items-center gap-1 truncate">
+                            <Heart size={11} className="text-[#C0563B] shrink-0" fill="currentColor" /> Likes
                         </span>
-                        <span className="text-[#2F7B58] font-bold hidden xs:inline shrink-0">+12%</span>
+                        <span className="text-[#9AA6A0] font-medium hidden xs:inline shrink-0">
+                            {publishedCount > 0 ? 'Live count' : 'No data'}
+                        </span>
                     </div>
                 </div>
             </section>
@@ -411,7 +565,7 @@ function ProfessionalHome() {
                             <Gift size={24} />
                         </div>
                         <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                                 <h3 className="text-sm sm:text-base font-bold text-white">
                                     Professional Rewards Store Open
                                 </h3>
@@ -432,48 +586,85 @@ function ProfessionalHome() {
                 </div>
             </section>
 
-            {/* 4. Main Two-Column Layout */}
+            {/* 5. Main Two-Column Layout */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
-                {/* Left 2 Columns: Recent Activity & Practice Card */}
+                {/* Left 2/3: Activity + Practice */}
                 <div className="space-y-6 lg:col-span-2">
 
-                    {/* Recent Activity Feed */}
+                    {/* Recent Activity — Supabase professional_activities + reviews */}
                     <section className="rounded-2xl border border-[#E8EFEB] bg-white p-5 sm:p-6 shadow-xs">
                         <div className="flex items-center justify-between pb-4 border-b border-[#E8EFEB]">
                             <div>
                                 <h2 className="text-base font-extrabold text-[#033135]">
-                                    Recent Activity & Interactions
+                                    Recent Activity &amp; Interactions
                                 </h2>
                                 <p className="text-xs text-[#647572]">
-                                    Likes, comments, peer reviews, and practice milestones.
+                                    Patient reviews and engagement from your content.
                                 </p>
                             </div>
-                            <span className="rounded-full bg-[#FAFBF9] border border-[#E8EFEB] px-2.5 py-1 text-[10px] font-bold text-[#647572]">
-                                Demo Activity
-                            </span>
                         </div>
 
-                        <div className="mt-4 divide-y divide-[#F0F4F2]">
-                            {activities.map((act) => {
-                                const Icon = act.icon
-                                return (
-                                    <div key={act.id} className="flex items-start gap-3.5 py-3.5 first:pt-0 last:pb-0">
-                                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${act.iconBg} ${act.iconColor}`}>
-                                            <Icon size={16} />
+                        {dashLoading && (
+                            <div className="flex items-center gap-2 mt-4 text-xs text-[#647572]">
+                                <Loader2 size={14} className="animate-spin" />
+                                Loading activity…
+                            </div>
+                        )}
+
+                        {!dashLoading && recentReviews.length === 0 && recentActivities.length === 0 && (
+                            <div className="mt-6 flex flex-col items-center gap-2 py-6 text-center">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F4F7F5] text-[#9AA6A0]">
+                                    <MessageSquare size={22} />
+                                </div>
+                                <p className="text-sm font-semibold text-[#324C4D]">No activity yet</p>
+                                <p className="text-xs text-[#9AA6A0] max-w-xs">
+                                    Patient reviews, likes and comments on your content will appear here as they come in.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Show recent reviews */}
+                        {!dashLoading && recentReviews.length > 0 && (
+                            <div className="mt-4 divide-y divide-[#F0F4F2]">
+                                {recentReviews.slice(0, 4).map((r) => (
+                                    <div key={r.id} className="flex items-start gap-3.5 py-3.5 first:pt-0 last:pb-0">
+                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F8E7A5] text-[#8B6D25]">
+                                            <Star size={16} />
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-xs font-medium text-[#033135] leading-relaxed">
-                                                {act.text}
+                                                <span className="font-bold">{r.rating}★</span> review from{' '}
+                                                <span className="font-semibold">{r.reviewer_name || 'Patient'}</span>
+                                                {r.comment ? `: "${r.comment.slice(0, 80)}${r.comment.length > 80 ? '…' : ''}"` : ''}
                                             </p>
                                             <span className="text-[10px] text-[#9AA6A0] font-medium">
-                                                {act.time}
+                                                {r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Recent'}
                                             </span>
                                         </div>
                                     </div>
-                                )
-                            })}
-                        </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Show activities if no reviews */}
+                        {!dashLoading && recentReviews.length === 0 && recentActivities.length > 0 && (
+                            <div className="mt-4 divide-y divide-[#F0F4F2]">
+                                {recentActivities.slice(0, 4).map((a) => (
+                                    <div key={a.id} className="flex items-start gap-3.5 py-3.5 first:pt-0 last:pb-0">
+                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#E4F0EA] text-[#2F7B58]">
+                                            <Zap size={16} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-medium text-[#033135] leading-relaxed">{a.title}</p>
+                                            <span className="text-[10px] text-[#9AA6A0] font-medium">
+                                                {a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Recent'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </section>
 
                     {/* Practice Profile Quick Summary */}
@@ -482,7 +673,7 @@ function ProfessionalHome() {
                             <div className="flex items-center gap-2">
                                 <Building2 size={18} className="text-[#648C83]" />
                                 <h2 className="text-base font-extrabold text-[#033135]">
-                                    Practice & Workplace Details
+                                    Practice &amp; Workplace Details
                                 </h2>
                             </div>
                             <Link
@@ -499,28 +690,30 @@ function ProfessionalHome() {
                                 <p className="mt-1 font-bold text-[#033135] text-sm">{workplace}</p>
                                 <p className="mt-0.5 text-[#647572] flex items-center gap-1">
                                     <MapPin size={12} className="text-[#9AA6A0]" />
-                                    {city} {state ? `, ${state}` : ''}
+                                    {city}{state ? `, ${state}` : ''}
                                 </p>
                             </div>
 
                             <div className="rounded-xl bg-[#FAFBF9] border border-[#E8EFEB] p-3">
                                 <span className="text-[10px] font-bold text-[#647572] uppercase">Qualifications</span>
                                 <p className="mt-1 font-bold text-[#033135] text-sm">
-                                    {professional?.qualifications || 'Clinical Degree'}
+                                    {professional?.qualifications || '—'}
                                 </p>
                                 <p className="mt-0.5 text-[#647572]">
-                                    Reg License: <span className="font-semibold text-[#033135]">{professional?.licenseNumber || 'Under Review'}</span>
+                                    Reg. No.:{' '}
+                                    <span className="font-semibold text-[#033135]">
+                                        {professional?.licenseNumber || 'Under Review'}
+                                    </span>
                                 </p>
                             </div>
                         </div>
                     </section>
-
                 </div>
 
-                {/* Right Column: Leaderboard Ranking Preview & Quick Share */}
+                {/* Right 1/3: Leaderboard + Share */}
                 <div className="space-y-6">
 
-                    {/* Professional Leaderboard Preview */}
+                    {/* Leaderboard Preview — Supabase-backed */}
                     <section className="rounded-2xl border border-[#E8EFEB] bg-white p-5 shadow-xs">
                         <div className="flex items-center justify-between pb-3 border-b border-[#E8EFEB]">
                             <div className="flex items-center gap-2">
@@ -530,7 +723,7 @@ function ProfessionalHome() {
                                 </h2>
                             </div>
                             <span className="rounded-full bg-[#F8E7A5]/70 px-2 py-0.5 text-[10px] font-black text-[#8B6D25]">
-                                Rank #{myRankEntry?.rank || '—'}
+                                {myRankEntry ? `Rank #${myRankEntry.rank}` : 'Unranked'}
                             </span>
                         </div>
 
@@ -540,8 +733,12 @@ function ProfessionalHome() {
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#F8E7A5]">
                                     Your Rank
                                 </span>
-                                <p className="text-lg font-black leading-tight">#{myRankEntry?.rank || '—'} active</p>
-                                <p className="text-[10px] text-[#C4D7D4]">Score: {myRankEntry?.score || 0} pts</p>
+                                <p className="text-lg font-black leading-tight">
+                                    {myRankEntry ? `#${myRankEntry.rank}` : '—'}
+                                </p>
+                                <p className="text-[10px] text-[#C4D7D4]">
+                                    Score: {myRankEntry ? (myRankEntry.score || 0).toLocaleString() : 0} pts
+                                </p>
                             </div>
                             <div className="text-right">
                                 <span className="text-lg font-black text-[#F8E7A5]">{liveXP.toLocaleString()}</span>
@@ -549,37 +746,39 @@ function ProfessionalHome() {
                             </div>
                         </div>
 
-                        {/* Top 3 List Preview */}
-                        <div className="mt-4 space-y-2">
-                            {top3.map((entry) => (
-                                <div
-                                    key={entry.id || entry.rank}
-                                    className="flex items-center justify-between rounded-xl p-2 text-xs hover:bg-[#FAFBF9] transition"
-                                >
-                                    <div className="flex items-center gap-2.5">
-                                        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ${entry.rank === 1
-                                            ? 'bg-[#F8E7A5] text-[#8B6D25]'
-                                            : entry.rank === 2
-                                                ? 'bg-[#E4F0EA] text-[#324C4D]'
-                                                : 'bg-[#DCD6F7] text-[#625780]'
+                        {/* Top 3 — real Supabase data */}
+                        {top3.length === 0 ? (
+                            <div className="mt-4 py-4 text-center">
+                                <p className="text-xs text-[#9AA6A0]">No ranked professionals yet.</p>
+                                <p className="text-[11px] text-[#9AA6A0] mt-1">Complete verification to appear on the leaderboard.</p>
+                            </div>
+                        ) : (
+                            <div className="mt-4 space-y-2">
+                                {top3.map((entry) => (
+                                    <div
+                                        key={entry.id}
+                                        className="flex items-center justify-between rounded-xl p-2 text-xs hover:bg-[#FAFBF9] transition"
+                                    >
+                                        <div className="flex items-center gap-2.5">
+                                            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ${
+                                                entry.rank === 1 ? 'bg-[#F8E7A5] text-[#8B6D25]'
+                                                    : entry.rank === 2 ? 'bg-[#E4F0EA] text-[#324C4D]'
+                                                    : 'bg-[#DCD6F7] text-[#625780]'
                                             }`}>
-                                            {entry.rank}
-                                        </span>
-                                        <div>
-                                            <p className="font-bold text-[#033135] truncate max-w-[130px]">
-                                                {entry.name}
-                                            </p>
-                                            <p className="text-[10px] text-[#647572] truncate max-w-[130px]">
-                                                {entry.specialty}
-                                            </p>
+                                                {entry.rank}
+                                            </span>
+                                            <div>
+                                                <p className="font-bold text-[#033135] truncate max-w-[130px]">{entry.name}</p>
+                                                <p className="text-[10px] text-[#647572] truncate max-w-[130px]">{entry.specialty}</p>
+                                            </div>
                                         </div>
+                                        <span className="font-bold text-[#033135] text-[11px]">
+                                            {(entry.xp || 0).toLocaleString()} XP
+                                        </span>
                                     </div>
-                                    <span className="font-bold text-[#033135] text-[11px]">
-                                        {(entry.xp || 0).toLocaleString()} XP
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        )}
 
                         <div className="mt-4 pt-3 border-t border-[#E8EFEB]">
                             <button
@@ -611,9 +810,7 @@ function ProfessionalHome() {
                             Copy Profile Link
                         </button>
                     </section>
-
                 </div>
-
             </div>
         </div>
     )

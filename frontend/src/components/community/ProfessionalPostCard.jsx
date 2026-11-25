@@ -1,20 +1,69 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
-    Heart, MessageCircle, Bookmark, Share2,
-    Play, BadgeCheck, X, FileText, Video,
-    MessageSquare, Clock, ArrowRight, Eye,
-    Sparkles, Quote, Volume2, Send,
+    Heart, MessageCircle, Play, BadgeCheck, X,
+    FileText, Video, MessageSquare, Clock, ArrowRight,
+    Quote, Send, Trash2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useAuth } from '../../context/AuthContext.jsx'
 import {
-    toggleLikePost,
-    toggleSavePost,
-    addComment,
-    getInteractionStatus,
-} from '../../services/professional/professionalContentService.js'
-import { getCommunityUser } from '../../services/professional/professionalReviewService.js'
+    togglePostLike,
+    fetchPostComments,
+    addPostComment,
+    deletePostComment,
+} from '../../services/communityService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
+
+function getTargetAuthorId(post) {
+    if (!post || post.isCurated) return null
+    return post.navigableAuthorId || post.authorId || null
+}
+
+function usePostLike(post, userId, onPostUpdated) {
+    const [optimistic, setOptimistic] = useState(null)
+    const [pending, setPending] = useState(false)
+
+    const isSamePost = optimistic && optimistic.postId === post?.id
+    const liked = isSamePost ? optimistic.liked : Boolean(post?.likedByMe)
+    const likesCount = isSamePost ? optimistic.likesCount : (post?.likesCount ?? post?.likes ?? 0)
+
+    const handleLike = async (e) => {
+        e.stopPropagation()
+        if (!post?.id || pending) return
+        if (!userId) {
+            toast.error('Please sign in to like posts.')
+            return
+        }
+
+        const prevLiked = liked
+        const prevCount = likesCount
+        const optimisticLiked = !prevLiked
+        const optimisticCount = Math.max(0, prevCount + (optimisticLiked ? 1 : -1))
+
+        setOptimistic({ postId: post.id, liked: optimisticLiked, likesCount: optimisticCount })
+        setPending(true)
+
+        try {
+            const res = await togglePostLike(post.id, userId, prevLiked)
+            const finalCount = typeof res.likesCount === 'number' ? res.likesCount : optimisticCount
+            onPostUpdated?.(post.id, {
+                likedByMe: res.likedByMe,
+                likesCount: finalCount,
+                likes: finalCount,
+            })
+            setOptimistic(null)
+        } catch (err) {
+            console.error('[ProfessionalPostCard] togglePostLike error:', err)
+            setOptimistic(null)
+            toast.error(err?.message || 'Could not update like. Please try again.')
+        } finally {
+            setPending(false)
+        }
+    }
+
+    return { liked, likesCount, pending, handleLike }
+}
 
 function getInitials(name) {
     if (!name) return '?'
@@ -38,27 +87,203 @@ function calculateReadTime(text = '') {
     return `${mins} min read`
 }
 
+function CommentsSection({
+    comments,
+    commentsLoading,
+    commentsError,
+    commentText,
+    onCommentTextChange,
+    onSubmitComment,
+    onDeleteComment,
+    submittingComment,
+    deletingCommentId,
+    currentUserId,
+    isReel = false,
+    sectionRef,
+    inputRef,
+}) {
+    return (
+        <div ref={sectionRef} className="space-y-4">
+            {/* Responses header */}
+            <div className="flex items-center justify-between border-b border-[#E8EFEB] pb-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#324C4D] flex items-center gap-1.5">
+                    <MessageCircle size={14} />{' '}
+                    {comments.length}{' '}
+                    {isReel
+                        ? `Comment${comments.length === 1 ? '' : 's'}`
+                        : 'Clinical Responses & Insights'}
+                </h3>
+            </div>
+
+            {/* Comments list */}
+            <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                {commentsLoading ? (
+                    <div className="flex justify-center py-6">
+                        <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#033135] border-t-transparent" />
+                    </div>
+                ) : commentsError ? (
+                    <p className="text-xs text-red-600 text-center py-4">{commentsError}</p>
+                ) : comments.length === 0 ? (
+                    <p className="text-xs text-[#9AA6A0] text-center py-4">
+                        {isReel
+                            ? 'No comments yet. Share your thoughts below!'
+                            : 'No responses yet. Share your clinical perspective below!'}
+                    </p>
+                ) : (
+                    comments.map((c) => (
+                        <div key={c.id} className="rounded-xl bg-[#FAFBF9] border border-[#E8EFEB] p-3 space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-bold text-[#033135] truncate">{c.authorName}</p>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <span className="text-[10px] text-[#9AA6A0]">{formatDate(c.createdAt)}</span>
+                                    {currentUserId && c.userId === currentUserId && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onDeleteComment(c.id)}
+                                            disabled={deletingCommentId === c.id}
+                                            aria-label={isReel ? 'Delete comment' : 'Delete response'}
+                                            className="text-[#9AA6A0] hover:text-red-500 transition disabled:opacity-40"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            <p className="text-xs text-[#4A5C58] leading-relaxed">{c.text}</p>
+                        </div>
+                    ))
+                )}
+            </div>
+
+            {/* Reply Composer */}
+            <form onSubmit={onSubmitComment} className="flex gap-2 pt-2 border-t border-[#E8EFEB]">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={commentText}
+                    onChange={(e) => onCommentTextChange(e.target.value)}
+                    disabled={submittingComment}
+                    placeholder={
+                        currentUserId
+                            ? isReel
+                                ? 'Add a comment on this reel...'
+                                : 'Write your clinical insight or reply...'
+                            : isReel
+                            ? 'Sign in to comment on this reel...'
+                            : 'Sign in to join this discussion...'
+                    }
+                    className="flex-1 rounded-xl border border-[#DCE7E3] bg-[#F8FAF7] px-3.5 py-2.5 text-xs outline-none focus:border-[#648C83] disabled:opacity-60"
+                />
+                <button
+                    type="submit"
+                    disabled={!commentText.trim() || submittingComment || !currentUserId}
+                    className="flex items-center gap-1 rounded-xl bg-[#033135] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50 hover:bg-[#324C4D] transition"
+                >
+                    <Send size={13} />
+                    <span>{submittingComment ? 'Posting...' : isReel ? 'Post' : 'Reply'}</span>
+                </button>
+            </form>
+        </div>
+    )
+}
+
 // ─── Post Detail Modal (Tailored per type) ───────────────────────────────────
 
-function PostDetailModal({ post, onClose, onNavigateToProfile }) {
-    if (!post) return null
-    const communityUser = getCommunityUser()
-    const isVerified = (post.authorVerificationStatus || '').toLowerCase().includes('verified')
-    const [comments, setComments] = useState(post.comments || [])
+function PostDetailModal({ post, onClose, onNavigateToProfile, onPostUpdated, focusComments = false }) {
+    const { user } = useAuth()
+    const postId = post?.id
+    const postType = post?.type
+    const hasComments = ['article', 'discussion', 'reel'].includes(postType)
+    const [comments, setComments] = useState(post?.comments || [])
+    const [commentsLoading, setCommentsLoading] = useState(() => hasComments)
+    const [commentsError, setCommentsError] = useState('')
     const [commentText, setCommentText] = useState('')
+    const [submittingComment, setSubmittingComment] = useState(false)
+    const [deletingCommentId, setDeletingCommentId] = useState(null)
+    const commentSectionRef = useRef(null)
+    const commentInputRef = useRef(null)
 
-    const handleSendComment = (e) => {
+    useEffect(() => {
+        if (!postId || !hasComments) return
+        let active = true
+        fetchPostComments(postId)
+            .then((rows) => {
+                if (!active) return
+                setComments(rows)
+                setCommentsError('')
+            })
+            .catch((err) => {
+                console.error('[PostDetailModal] fetchPostComments error:', err)
+                if (active) setCommentsError('Could not load comments right now.')
+            })
+            .finally(() => {
+                if (active) setCommentsLoading(false)
+            })
+        return () => { active = false }
+    }, [postId, hasComments])
+
+    useEffect(() => {
+        if (!focusComments || !hasComments) return
+        const timer = setTimeout(() => {
+            commentSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+            commentInputRef.current?.focus({ preventScroll: true })
+        }, 60)
+        return () => clearTimeout(timer)
+    }, [focusComments, hasComments])
+
+    if (!post) return null
+
+    const isVerified = (post.authorVerificationStatus || '').toLowerCase().includes('verified')
+    const targetAuthorId = getTargetAuthorId(post)
+
+    const handleAuthorClick = () => {
+        if (!targetAuthorId) return
+        onNavigateToProfile?.(targetAuthorId)
+        onClose()
+    }
+
+    const handleSendComment = async (e) => {
         e.preventDefault()
-        if (!commentText.trim()) return
-        const res = addComment(post.id, {
-            authorId: communityUser.id,
-            authorName: communityUser.name || 'Community Member',
-            text: commentText.trim(),
-        })
-        if (res.success) {
+        if (!commentText.trim() || submittingComment) return
+        if (!user?.id) {
+            toast.error('Please sign in to post a response.')
+            return
+        }
+
+        setSubmittingComment(true)
+        try {
+            const res = await addPostComment(post.id, user.id, commentText.trim())
             setComments((prev) => [...prev, res.comment])
             setCommentText('')
+            const nextCount = typeof res.commentsCount === 'number'
+                ? res.commentsCount
+                : (post.commentsCount || 0) + 1
+            onPostUpdated?.(post.id, { commentsCount: nextCount })
             toast.success('Response posted!')
+        } catch (err) {
+            console.error('[PostDetailModal] addPostComment error:', err)
+            toast.error(err?.message || 'Could not post response. Please try again.')
+        } finally {
+            setSubmittingComment(false)
+        }
+    }
+
+    const handleDeleteComment = async (commentId) => {
+        if (!user?.id || !commentId || deletingCommentId) return
+        setDeletingCommentId(commentId)
+        try {
+            const res = await deletePostComment(commentId, user.id)
+            setComments((prev) => prev.filter((c) => c.id !== commentId))
+            const nextCount = typeof res.commentsCount === 'number'
+                ? res.commentsCount
+                : Math.max(0, (post.commentsCount || 1) - 1)
+            onPostUpdated?.(post.id, { commentsCount: nextCount })
+            toast.success('Response removed.')
+        } catch (err) {
+            console.error('[PostDetailModal] deletePostComment error:', err)
+            toast.error('Could not remove response.')
+        } finally {
+            setDeletingCommentId(null)
         }
     }
 
@@ -135,8 +360,11 @@ function PostDetailModal({ post, onClose, onNavigateToProfile }) {
 
                         {/* Author info */}
                         <button
-                            onClick={() => { onNavigateToProfile(post.authorId); onClose() }}
-                            className="flex items-center gap-3 w-full text-left p-2 rounded-xl hover:bg-[#FAFBF9] transition"
+                            type="button"
+                            onClick={handleAuthorClick}
+                            className={`flex items-center gap-3 w-full text-left p-2 rounded-xl transition ${
+                                targetAuthorId ? 'hover:bg-[#FAFBF9] cursor-pointer' : 'cursor-default'
+                            }`}
                         >
                             {post.authorPhoto ? (
                                 <img src={post.authorPhoto} alt="" className="h-10 w-10 rounded-full object-cover ring-2 ring-[#E4F0EA]" />
@@ -159,6 +387,24 @@ function PostDetailModal({ post, onClose, onNavigateToProfile }) {
                             {post.caption && (
                                 <p className="mt-1.5 text-xs text-[#4A5C58] leading-relaxed whitespace-pre-wrap">{post.caption}</p>
                             )}
+                        </div>
+
+                        <div className="px-2 pt-2 border-t border-[#E8EFEB]">
+                            <CommentsSection
+                                comments={comments}
+                                commentsLoading={commentsLoading}
+                                commentsError={commentsError}
+                                commentText={commentText}
+                                onCommentTextChange={setCommentText}
+                                onSubmitComment={handleSendComment}
+                                onDeleteComment={handleDeleteComment}
+                                submittingComment={submittingComment}
+                                deletingCommentId={deletingCommentId}
+                                currentUserId={user?.id}
+                                isReel
+                                sectionRef={commentSectionRef}
+                                inputRef={commentInputRef}
+                            />
                         </div>
                     </div>
                 )}
@@ -183,8 +429,11 @@ function PostDetailModal({ post, onClose, onNavigateToProfile }) {
 
                         {/* Author byline */}
                         <button
-                            onClick={() => { onNavigateToProfile(post.authorId); onClose() }}
-                            className="flex items-center gap-3 w-full text-left py-3 border-y border-[#E8EFEB]"
+                            type="button"
+                            onClick={handleAuthorClick}
+                            className={`flex items-center gap-3 w-full text-left py-3 border-y border-[#E8EFEB] ${
+                                targetAuthorId ? 'cursor-pointer' : 'cursor-default'
+                            }`}
                         >
                             {post.authorPhoto ? (
                                 <img src={post.authorPhoto} alt="" className="h-11 w-11 rounded-full object-cover ring-2 ring-[#E4F0EA]" />
@@ -213,6 +462,23 @@ function PostDetailModal({ post, onClose, onNavigateToProfile }) {
                         <div className="text-sm leading-7 text-[#324C4D] space-y-4 whitespace-pre-line font-normal">
                             {post.body || post.content || 'Full article content.'}
                         </div>
+
+                        <div className="border-t border-[#E8EFEB] pt-5">
+                            <CommentsSection
+                                comments={comments}
+                                commentsLoading={commentsLoading}
+                                commentsError={commentsError}
+                                commentText={commentText}
+                                onCommentTextChange={setCommentText}
+                                onSubmitComment={handleSendComment}
+                                onDeleteComment={handleDeleteComment}
+                                submittingComment={submittingComment}
+                                deletingCommentId={deletingCommentId}
+                                currentUserId={user?.id}
+                                sectionRef={commentSectionRef}
+                                inputRef={commentInputRef}
+                            />
+                        </div>
                     </div>
                 )}
 
@@ -229,8 +495,11 @@ function PostDetailModal({ post, onClose, onNavigateToProfile }) {
                             </div>
 
                             <button
-                                onClick={() => { onNavigateToProfile(post.authorId); onClose() }}
-                                className="flex items-center gap-2.5 text-left"
+                                type="button"
+                                onClick={handleAuthorClick}
+                                className={`flex items-center gap-2.5 text-left ${
+                                    targetAuthorId ? 'cursor-pointer' : 'cursor-default'
+                                }`}
                             >
                                 {post.authorPhoto ? (
                                     <img src={post.authorPhoto} alt="" className="h-8 w-8 rounded-full object-cover ring-1 ring-[#033135]/20" />
@@ -259,50 +528,20 @@ function PostDetailModal({ post, onClose, onNavigateToProfile }) {
                             )}
                         </div>
 
-                        {/* Responses header */}
-                        <div className="flex items-center justify-between border-b border-[#E8EFEB] pb-2">
-                            <h3 className="text-xs font-bold uppercase tracking-wider text-[#324C4D] flex items-center gap-1.5">
-                                <MessageCircle size={14} /> {comments.length} Clinical Responses &amp; Insights
-                            </h3>
-                        </div>
-
-                        {/* Comments list */}
-                        <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-                            {comments.length === 0 ? (
-                                <p className="text-xs text-[#9AA6A0] text-center py-4">
-                                    No responses yet. Share your clinical perspective below!
-                                </p>
-                            ) : (
-                                comments.map((c) => (
-                                    <div key={c.id} className="rounded-xl bg-[#FAFBF9] border border-[#E8EFEB] p-3 space-y-1">
-                                        <div className="flex items-center justify-between">
-                                            <p className="text-xs font-bold text-[#033135]">{c.authorName}</p>
-                                            <span className="text-[10px] text-[#9AA6A0]">{formatDate(c.createdAt)}</span>
-                                        </div>
-                                        <p className="text-xs text-[#4A5C58] leading-relaxed">{c.text}</p>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-
-                        {/* Reply Composer */}
-                        <form onSubmit={handleSendComment} className="flex gap-2 pt-2 border-t border-[#E8EFEB]">
-                            <input
-                                type="text"
-                                value={commentText}
-                                onChange={(e) => setCommentText(e.target.value)}
-                                placeholder="Write your clinical insight or reply..."
-                                className="flex-1 rounded-xl border border-[#DCE7E3] bg-[#F8FAF7] px-3.5 py-2.5 text-xs outline-none focus:border-[#648C83]"
-                            />
-                            <button
-                                type="submit"
-                                disabled={!commentText.trim()}
-                                className="flex items-center gap-1 rounded-xl bg-[#033135] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50 hover:bg-[#324C4D] transition"
-                            >
-                                <Send size={13} />
-                                <span>Reply</span>
-                            </button>
-                        </form>
+                        <CommentsSection
+                            comments={comments}
+                            commentsLoading={commentsLoading}
+                            commentsError={commentsError}
+                            commentText={commentText}
+                            onCommentTextChange={setCommentText}
+                            onSubmitComment={handleSendComment}
+                            onDeleteComment={handleDeleteComment}
+                            submittingComment={submittingComment}
+                            deletingCommentId={deletingCommentId}
+                            currentUserId={user?.id}
+                            sectionRef={commentSectionRef}
+                            inputRef={commentInputRef}
+                        />
                     </div>
                 )}
             </div>
@@ -312,37 +551,15 @@ function PostDetailModal({ post, onClose, onNavigateToProfile }) {
 
 // ─── 1. REEL CARD (YT Shorts & Instagram Reels Style) ─────────────────────────
 
-export function ReelPostCard({ post, onNavigateToProfile, onOpenModal }) {
-    const communityUser = getCommunityUser()
-    const [interaction, setInteraction] = useState({ liked: false, saved: false })
-    const [likesCount, setLikesCount] = useState(post.likesCount || 0)
+export function ReelPostCard({ post, onNavigateToProfile, onOpenModal, onPostUpdated }) {
+    const { user } = useAuth()
+    const { liked, likesCount, pending, handleLike } = usePostLike(post, user?.id, onPostUpdated)
     const isVerified = (post.authorVerificationStatus || '').toLowerCase().includes('verified')
-
-    useEffect(() => {
-        setInteraction(getInteractionStatus(post.id, communityUser.id))
-    }, [post.id, communityUser.id])
-
-    const handleLike = (e) => {
-        e.stopPropagation()
-        const res = toggleLikePost(post.id, communityUser.id)
-        if (res.success) {
-            setInteraction((prev) => ({ ...prev, liked: res.liked }))
-            setLikesCount(res.likesCount)
-        }
-    }
-
-    const handleSave = (e) => {
-        e.stopPropagation()
-        const res = toggleSavePost(post.id, communityUser.id)
-        if (res.success) {
-            setInteraction((prev) => ({ ...prev, saved: res.saved }))
-            toast.success(res.saved ? 'Reel saved!' : 'Removed from saved')
-        }
-    }
+    const targetAuthorId = getTargetAuthorId(post)
 
     return (
         <article
-            onClick={onOpenModal}
+            onClick={() => onOpenModal(false)}
             className="group relative aspect-[9/16] w-full overflow-hidden rounded-3xl bg-black cursor-pointer shadow-md transition-all duration-300 hover:shadow-xl hover:scale-[1.01]"
         >
             {/* Background Image / Video Poster */}
@@ -382,8 +599,14 @@ export function ReelPostCard({ post, onNavigateToProfile, onOpenModal }) {
             <div className="absolute inset-x-0 bottom-0 p-3.5 z-10 space-y-2">
                 {/* Author row */}
                 <button
-                    onClick={(e) => { e.stopPropagation(); onNavigateToProfile(post.authorId) }}
-                    className="flex items-center gap-2 text-left group/auth"
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        if (targetAuthorId) onNavigateToProfile?.(targetAuthorId)
+                    }}
+                    className={`flex items-center gap-2 text-left group/auth ${
+                        targetAuthorId ? 'cursor-pointer' : 'cursor-default'
+                    }`}
                 >
                     {post.authorPhoto ? (
                         <img
@@ -398,7 +621,9 @@ export function ReelPostCard({ post, onNavigateToProfile, onOpenModal }) {
                         </div>
                     )}
                     <div className="min-w-0">
-                        <p className="flex items-center gap-1 text-xs font-bold text-white drop-shadow-sm truncate group-hover/auth:underline">
+                        <p className={`flex items-center gap-1 text-xs font-bold text-white drop-shadow-sm truncate ${
+                            targetAuthorId ? 'group-hover/auth:underline' : ''
+                        }`}>
                             {post.authorName}
                             {isVerified && <BadgeCheck size={13} className="text-[#A4D8D0] shrink-0" />}
                         </p>
@@ -417,37 +642,33 @@ export function ReelPostCard({ post, onNavigateToProfile, onOpenModal }) {
                 >
                     <div className="flex items-center gap-2">
                         <button
+                            type="button"
                             onClick={handleLike}
-                            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold backdrop-blur-md transition ${
-                                interaction.liked
+                            disabled={pending}
+                            aria-label="Like reel"
+                            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold backdrop-blur-md transition disabled:opacity-60 ${
+                                liked
                                     ? 'bg-red-500/80 text-white'
                                     : 'bg-black/40 text-white/90 hover:bg-black/60'
                             }`}
                         >
-                            <Heart size={12} fill={interaction.liked ? 'white' : 'none'} />
+                            <Heart size={12} fill={liked ? 'white' : 'none'} />
                             <span>{likesCount}</span>
                         </button>
 
                         <button
-                            onClick={onOpenModal}
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation()
+                                onOpenModal(true)
+                            }}
+                            aria-label="Open reel comments"
                             className="flex items-center gap-1 rounded-full bg-black/40 backdrop-blur-md px-2.5 py-1 text-[11px] font-medium text-white/90 hover:bg-black/60 transition"
                         >
                             <MessageCircle size={12} />
                             <span>{post.commentsCount || 0}</span>
                         </button>
                     </div>
-
-                    <button
-                        onClick={handleSave}
-                        className={`rounded-full p-1.5 backdrop-blur-md transition ${
-                            interaction.saved
-                                ? 'bg-[#E4F0EA] text-[#033135]'
-                                : 'bg-black/40 text-white/90 hover:bg-black/60'
-                        }`}
-                        aria-label="Save reel"
-                    >
-                        <Bookmark size={13} fill={interaction.saved ? 'currentColor' : 'none'} />
-                    </button>
                 </div>
             </div>
         </article>
@@ -456,34 +677,12 @@ export function ReelPostCard({ post, onNavigateToProfile, onOpenModal }) {
 
 // ─── 2. ARTICLE CARD (Editorial Medical Journal Style) ────────────────────────
 
-export function ArticlePostCard({ post, onNavigateToProfile, onOpenModal }) {
-    const communityUser = getCommunityUser()
-    const [interaction, setInteraction] = useState({ liked: false, saved: false })
-    const [likesCount, setLikesCount] = useState(post.likesCount || 0)
+export function ArticlePostCard({ post, onNavigateToProfile, onOpenModal, onPostUpdated }) {
+    const { user } = useAuth()
+    const { liked, likesCount, pending, handleLike } = usePostLike(post, user?.id, onPostUpdated)
     const isVerified = (post.authorVerificationStatus || '').toLowerCase().includes('verified')
     const readTime = calculateReadTime(post.body || post.description)
-
-    useEffect(() => {
-        setInteraction(getInteractionStatus(post.id, communityUser.id))
-    }, [post.id, communityUser.id])
-
-    const handleLike = (e) => {
-        e.stopPropagation()
-        const res = toggleLikePost(post.id, communityUser.id)
-        if (res.success) {
-            setInteraction((prev) => ({ ...prev, liked: res.liked }))
-            setLikesCount(res.likesCount)
-        }
-    }
-
-    const handleSave = (e) => {
-        e.stopPropagation()
-        const res = toggleSavePost(post.id, communityUser.id)
-        if (res.success) {
-            setInteraction((prev) => ({ ...prev, saved: res.saved }))
-            toast.success(res.saved ? 'Article bookmarked!' : 'Removed from bookmarks')
-        }
-    }
+    const targetAuthorId = getTargetAuthorId(post)
 
     return (
         <article
@@ -537,8 +736,14 @@ export function ArticlePostCard({ post, onNavigateToProfile, onOpenModal }) {
             {/* Author Byline & Action Footer */}
             <div className="mt-4 pt-4 border-t border-[#F0F4F2] flex items-center justify-between">
                 <button
-                    onClick={(e) => { e.stopPropagation(); onNavigateToProfile(post.authorId) }}
-                    className="flex items-center gap-2.5 text-left group/author min-w-0"
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        if (targetAuthorId) onNavigateToProfile?.(targetAuthorId)
+                    }}
+                    className={`flex items-center gap-2.5 text-left group/author min-w-0 ${
+                        targetAuthorId ? 'cursor-pointer' : 'cursor-default'
+                    }`}
                 >
                     {post.authorPhoto ? (
                         <img
@@ -553,7 +758,9 @@ export function ArticlePostCard({ post, onNavigateToProfile, onOpenModal }) {
                         </div>
                     )}
                     <div className="min-w-0">
-                        <p className="text-xs font-bold text-[#033135] flex items-center gap-1 truncate group-hover/author:underline">
+                        <p className={`text-xs font-bold text-[#033135] flex items-center gap-1 truncate ${
+                            targetAuthorId ? 'group-hover/author:underline' : ''
+                        }`}>
                             {post.authorName}
                             {isVerified && <BadgeCheck size={13} className="text-[#6B5B95] shrink-0" />}
                         </p>
@@ -563,23 +770,16 @@ export function ArticlePostCard({ post, onNavigateToProfile, onOpenModal }) {
 
                 <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <button
+                        type="button"
                         onClick={handleLike}
-                        className={`flex items-center gap-1 text-xs font-semibold transition ${
-                            interaction.liked ? 'text-red-500' : 'text-[#647572] hover:text-[#033135]'
+                        disabled={pending}
+                        aria-label="Like article"
+                        className={`flex items-center gap-1 text-xs font-semibold transition disabled:opacity-60 ${
+                            liked ? 'text-red-500' : 'text-[#647572] hover:text-[#033135]'
                         }`}
                     >
-                        <Heart size={15} fill={interaction.liked ? 'currentColor' : 'none'} />
+                        <Heart size={15} fill={liked ? 'currentColor' : 'none'} />
                         <span>{likesCount}</span>
-                    </button>
-
-                    <button
-                        onClick={handleSave}
-                        className={`text-xs transition ${
-                            interaction.saved ? 'text-[#033135]' : 'text-[#647572] hover:text-[#033135]'
-                        }`}
-                        aria-label="Bookmark"
-                    >
-                        <Bookmark size={15} fill={interaction.saved ? 'currentColor' : 'none'} />
                     </button>
 
                     <span className="text-xs font-bold text-[#033135] flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
@@ -593,34 +793,12 @@ export function ArticlePostCard({ post, onNavigateToProfile, onOpenModal }) {
 
 // ─── 3. DISCUSSION CARD (Conversational Medical Rounds Style) ─────────────────
 
-export function DiscussionPostCard({ post, onNavigateToProfile, onOpenModal }) {
-    const communityUser = getCommunityUser()
-    const [interaction, setInteraction] = useState({ liked: false, saved: false })
-    const [likesCount, setLikesCount] = useState(post.likesCount || 0)
+export function DiscussionPostCard({ post, onNavigateToProfile, onOpenModal, onPostUpdated }) {
+    const { user } = useAuth()
+    const { liked, likesCount, pending, handleLike } = usePostLike(post, user?.id, onPostUpdated)
     const isVerified = (post.authorVerificationStatus || '').toLowerCase().includes('verified')
-    const replyCount = (post.comments?.length || post.commentsCount || 0)
-
-    useEffect(() => {
-        setInteraction(getInteractionStatus(post.id, communityUser.id))
-    }, [post.id, communityUser.id])
-
-    const handleLike = (e) => {
-        e.stopPropagation()
-        const res = toggleLikePost(post.id, communityUser.id)
-        if (res.success) {
-            setInteraction((prev) => ({ ...prev, liked: res.liked }))
-            setLikesCount(res.likesCount)
-        }
-    }
-
-    const handleSave = (e) => {
-        e.stopPropagation()
-        const res = toggleSavePost(post.id, communityUser.id)
-        if (res.success) {
-            setInteraction((prev) => ({ ...prev, saved: res.saved }))
-            toast.success(res.saved ? 'Discussion saved!' : 'Removed from saved')
-        }
-    }
+    const replyCount = post.commentsCount ?? post.comments?.length ?? 0
+    const targetAuthorId = getTargetAuthorId(post)
 
     return (
         <article
@@ -643,8 +821,14 @@ export function DiscussionPostCard({ post, onNavigateToProfile, onOpenModal }) {
 
                 {/* Author Prompt Lead */}
                 <button
-                    onClick={(e) => { e.stopPropagation(); onNavigateToProfile(post.authorId) }}
-                    className="flex items-center gap-2.5 text-left group/auth pt-1"
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        if (targetAuthorId) onNavigateToProfile?.(targetAuthorId)
+                    }}
+                    className={`flex items-center gap-2.5 text-left group/auth pt-1 ${
+                        targetAuthorId ? 'cursor-pointer' : 'cursor-default'
+                    }`}
                 >
                     {post.authorPhoto ? (
                         <img
@@ -659,7 +843,9 @@ export function DiscussionPostCard({ post, onNavigateToProfile, onOpenModal }) {
                         </div>
                     )}
                     <div className="min-w-0">
-                        <p className="text-xs font-bold text-[#033135] flex items-center gap-1 truncate group-hover/auth:underline">
+                        <p className={`text-xs font-bold text-[#033135] flex items-center gap-1 truncate ${
+                            targetAuthorId ? 'group-hover/auth:underline' : ''
+                        }`}>
                             {post.authorName}
                             {isVerified && <BadgeCheck size={13} className="text-[#6B5B95]" />}
                             <span className="font-normal text-[#647572]">asks:</span>
@@ -693,26 +879,20 @@ export function DiscussionPostCard({ post, onNavigateToProfile, onOpenModal }) {
 
                 <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <button
+                        type="button"
                         onClick={handleLike}
-                        className={`flex items-center gap-1 text-xs font-semibold transition ${
-                            interaction.liked ? 'text-red-500' : 'text-[#647572] hover:text-[#033135]'
+                        disabled={pending}
+                        aria-label="Like discussion"
+                        className={`flex items-center gap-1 text-xs font-semibold transition disabled:opacity-60 ${
+                            liked ? 'text-red-500' : 'text-[#647572] hover:text-[#033135]'
                         }`}
                     >
-                        <Heart size={15} fill={interaction.liked ? 'currentColor' : 'none'} />
+                        <Heart size={15} fill={liked ? 'currentColor' : 'none'} />
                         <span>{likesCount}</span>
                     </button>
 
                     <button
-                        onClick={handleSave}
-                        className={`text-xs transition ${
-                            interaction.saved ? 'text-[#033135]' : 'text-[#647572] hover:text-[#033135]'
-                        }`}
-                        aria-label="Save"
-                    >
-                        <Bookmark size={15} fill={interaction.saved ? 'currentColor' : 'none'} />
-                    </button>
-
-                    <button
+                        type="button"
                         onClick={onOpenModal}
                         className="text-xs font-bold text-[#033135] hover:text-[#648C83] flex items-center gap-1"
                     >
@@ -727,8 +907,14 @@ export function DiscussionPostCard({ post, onNavigateToProfile, onOpenModal }) {
 
 // ─── Main Delegator Card Component ───────────────────────────────────────────
 
-function ProfessionalPostCard({ post, onNavigateToProfile }) {
+function ProfessionalPostCard({ post, onNavigateToProfile, onPostUpdated }) {
     const [modalOpen, setModalOpen] = useState(false)
+    const [focusCommentsOnOpen, setFocusCommentsOnOpen] = useState(false)
+
+    const openModal = (focusComments = false) => {
+        setFocusCommentsOnOpen(Boolean(focusComments))
+        setModalOpen(true)
+    }
 
     return (
         <>
@@ -736,7 +922,8 @@ function ProfessionalPostCard({ post, onNavigateToProfile }) {
                 <ReelPostCard
                     post={post}
                     onNavigateToProfile={onNavigateToProfile}
-                    onOpenModal={() => setModalOpen(true)}
+                    onOpenModal={openModal}
+                    onPostUpdated={onPostUpdated}
                 />
             )}
 
@@ -744,7 +931,8 @@ function ProfessionalPostCard({ post, onNavigateToProfile }) {
                 <ArticlePostCard
                     post={post}
                     onNavigateToProfile={onNavigateToProfile}
-                    onOpenModal={() => setModalOpen(true)}
+                    onOpenModal={() => openModal(false)}
+                    onPostUpdated={onPostUpdated}
                 />
             )}
 
@@ -752,15 +940,22 @@ function ProfessionalPostCard({ post, onNavigateToProfile }) {
                 <DiscussionPostCard
                     post={post}
                     onNavigateToProfile={onNavigateToProfile}
-                    onOpenModal={() => setModalOpen(true)}
+                    onOpenModal={() => openModal(false)}
+                    onPostUpdated={onPostUpdated}
                 />
             )}
 
             {modalOpen && (
                 <PostDetailModal
+                    key={post.id}
                     post={post}
-                    onClose={() => setModalOpen(false)}
+                    onClose={() => {
+                        setModalOpen(false)
+                        setFocusCommentsOnOpen(false)
+                    }}
                     onNavigateToProfile={onNavigateToProfile}
+                    onPostUpdated={onPostUpdated}
+                    focusComments={focusCommentsOnOpen}
                 />
             )}
         </>

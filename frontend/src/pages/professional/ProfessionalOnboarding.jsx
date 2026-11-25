@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
     ArrowLeft,
@@ -23,13 +23,14 @@ import {
     Copy,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getCurrentProfessional } from '../../services/professional/professionalAuthService.js'
+import { useAuth } from '../../context/AuthContext.jsx'
+import { fetchCurrentProfessional } from '../../services/professional/professionalAuthService.js'
 import {
     getDraftOnboarding,
     saveDraftOnboarding,
     completeOnboarding,
-    simulateDocumentUpload,
-    isOnboardingCompleted,
+    uploadProfessionalDocument,
+    deleteProfessionalDocument,
 } from '../../services/professional/professionalProfileService.js'
 import {
     saveConsultationSettings,
@@ -84,8 +85,21 @@ function Wordmark() {
 
 function ProfessionalOnboarding() {
     const navigate = useNavigate()
+    const { user, loading: authLoading } = useAuth()
     const [currentStep, setCurrentStep] = useState(1)
     const [professional, setProfessional] = useState(null)
+    const [submitting, setSubmitting] = useState(false)
+    const [uploadingDocument, setUploadingDocument] = useState(false)
+    const pendingDocumentTypeRef = useRef('license')
+    const documentInputRef = useRef(null)
+    const verificationStatus = String(professional?.verificationStatus || 'Pending Verification').trim()
+    const normalizedVerificationStatus = verificationStatus.toLowerCase()
+    const verificationLabel = ['verified', 'verified practitioner', 'approved'].includes(normalizedVerificationStatus)
+        ? 'Verified'
+        : normalizedVerificationStatus === 'rejected'
+            ? 'Rejected'
+            : verificationStatus
+    const isVerificationApproved = verificationLabel === 'Verified'
 
     // Form state
     const [formData, setFormData] = useState({
@@ -130,35 +144,52 @@ function ProfessionalOnboarding() {
 
     // Load initial data and restore drafts
     useEffect(() => {
-        const prof = getCurrentProfessional()
-        if (!prof) {
+        if (authLoading) return
+        if (!user?.id) {
             toast.error('Please log in or register first.')
             navigate('/professional/login')
             return
         }
 
-        if (isOnboardingCompleted(prof.id)) {
-            navigate('/professional/home')
-            return
+        let cancelled = false
+        async function loadProf() {
+            const prof = await fetchCurrentProfessional(user)
+            if (cancelled) return
+
+            if (!prof) {
+                toast.error('Please log in or register first.')
+                navigate('/professional/login')
+                return
+            }
+
+            if (prof.onboardingCompleted) {
+                navigate('/professional/home')
+                return
+            }
+
+            setProfessional(prof)
+
+            const draft = getDraftOnboarding(prof.id)
+            if (draft) {
+                setFormData((prev) => ({
+                    ...prev,
+                    ...draft,
+                    fullName: draft.fullName || prof.fullName || prof.name || '',
+                    consultationPhone: draft.consultationPhone || draft.phone || prof.phone || '',
+                }))
+            } else {
+                setFormData((prev) => ({
+                    ...prev,
+                    fullName: prof.fullName || prof.name || '',
+                }))
+            }
         }
 
-        setProfessional(prof)
-
-        const draft = getDraftOnboarding(prof.id)
-        if (draft) {
-            setFormData((prev) => ({
-                ...prev,
-                ...draft,
-                fullName: draft.fullName || prof.name || '',
-                consultationPhone: draft.consultationPhone || draft.phone || '',
-            }))
-        } else {
-            setFormData((prev) => ({
-                ...prev,
-                fullName: prof.name || '',
-            }))
+        loadProf()
+        return () => {
+            cancelled = true
         }
-    }, [navigate])
+    }, [authLoading, user, navigate])
 
     const handleInputChange = (e) => {
         const { name, value, type, checked } = e.target
@@ -228,23 +259,37 @@ function ProfessionalOnboarding() {
         toast.success(`Copied hours (${template.startTime} - ${template.endTime}) to all days`)
     }
 
-    // Add simulated document upload
-    const handleAddDocument = (docName, docSize, docType) => {
-        if (!professional) return
-        const newDoc = simulateDocumentUpload(professional.id, {
-            name: docName,
-            size: docSize,
-            type: docType,
-        })
-        const updatedDocs = [...formData.documents, newDoc]
-        const updated = { ...formData, documents: updatedDocs }
-        setFormData(updated)
-        saveDraftOnboarding(professional.id, updated)
-        toast.success(`Attached "${docName}"`)
+    const handleAddDocument = async (event) => {
+        const file = event.target.files?.[0]
+        event.target.value = ''
+        if (!professional || !file) return
+        setUploadingDocument(true)
+        try {
+            const result = await uploadProfessionalDocument(professional.id, file, pendingDocumentTypeRef.current)
+            if (!result.success) {
+                toast.error(result.error || 'Could not upload credential document.')
+                return
+            }
+            const updated = { ...formData, documents: [...formData.documents, result.document] }
+            setFormData(updated)
+            saveDraftOnboarding(professional.id, updated)
+            toast.success(`Attached "${file.name}"`)
+        } catch (error) {
+            toast.error(error?.message || 'Could not upload credential document.')
+        } finally {
+            setUploadingDocument(false)
+        }
     }
 
-    const handleRemoveDocument = (docId) => {
-        const updatedDocs = formData.documents.filter((d) => d.id !== docId)
+    const handleRemoveDocument = async (doc) => {
+        if (doc.objectPath) {
+            const result = await deleteProfessionalDocument(professional?.id, doc.objectPath)
+            if (!result.success) {
+                toast.error(result.error || 'Could not remove credential document.')
+                return
+            }
+        }
+        const updatedDocs = formData.documents.filter((item) => item.id !== doc.id)
         const updated = { ...formData, documents: updatedDocs }
         setFormData(updated)
         if (professional) {
@@ -363,31 +408,41 @@ function ProfessionalOnboarding() {
         }
     }
 
-    const handleFinalSubmit = () => {
-        if (!professional) return
-        const res = completeOnboarding(professional.id, formData)
-        if (res.success) {
-            // Save consultation settings persistently
-            saveConsultationSettings(professional.id, {
-                isEnabled: formData.offerConsultations === 'yes',
-                consultationFee: Number(formData.consultationFee) || 500,
-                durationMinutes: Number(formData.durationMinutes) || 20,
-                bufferMinutes: Number(formData.bufferMinutes) || 5,
-                contactPhone: formData.consultationPhone || formData.phone,
-                phoneConsent: formData.phoneConsent,
-                schedule: formData.schedule || DEFAULT_SCHEDULE,
-                payoutDetails: {
-                    method: formData.payoutMethod || 'upi',
-                    upiId: formData.payoutUpi || '',
-                    accountHolderName: formData.payoutBankHolder || '',
-                    bankName: formData.payoutBankName || '',
-                    accountNumber: formData.payoutBankAccount || '',
-                    ifscCode: formData.payoutBankIfsc || '',
-                },
-            })
-            setCurrentStep(6) // Completion screen
-        } else {
-            toast.error(res.error || 'Failed to complete onboarding.')
+    const handleFinalSubmit = async () => {
+        if (!professional || submitting) return
+        setSubmitting(true)
+        try {
+            const res = await completeOnboarding(professional.id, formData)
+            if (res.success) {
+                if (res.professional) setProfessional(res.professional)
+                const consultRes = await saveConsultationSettings(professional.id, {
+                    isEnabled: formData.offerConsultations === 'yes',
+                    consultationFee: Number(formData.consultationFee) || 500,
+                    durationMinutes: Number(formData.durationMinutes) || 20,
+                    bufferMinutes: Number(formData.bufferMinutes) || 5,
+                    contactPhone: formData.consultationPhone || formData.phone,
+                    phoneConsent: formData.phoneConsent,
+                    schedule: formData.schedule || DEFAULT_SCHEDULE,
+                    payoutDetails: {
+                        method: formData.payoutMethod || 'upi',
+                        upiId: formData.payoutUpi || '',
+                        accountHolderName: formData.payoutBankHolder || '',
+                        bankName: formData.payoutBankName || '',
+                        accountNumber: formData.payoutBankAccount || '',
+                        ifscCode: formData.payoutBankIfsc || '',
+                    },
+                })
+                if (!consultRes.success) {
+                    toast.error(consultRes.error || 'Profile saved, but consultation settings had an error.')
+                }
+                setCurrentStep(6) // Completion screen
+            } else {
+                toast.error(res.error || 'Failed to complete onboarding.')
+            }
+        } catch (err) {
+            toast.error(err?.message || 'Failed to complete onboarding.')
+        } finally {
+            setSubmitting(false)
         }
     }
 
@@ -1195,10 +1250,10 @@ function ProfessionalOnboarding() {
                                     <Clock size={20} className="shrink-0 text-[#8B6D25] mt-0.5" />
                                     <div>
                                         <h4 className="text-sm font-bold text-[#033135]">
-                                            Verification Status: Pending Verification
+                                            Verification Status: {verificationLabel}
                                         </h4>
                                         <p className="mt-0.5 text-xs text-[#7A6123]">
-                                            For prototype demo purposes, credential verification is simulated. Submitted profiles automatically enter the "Pending Verification" review state.
+                                            Your current verification status is loaded from your professional profile. Submit updated credentials if your status is rejected or still pending.
                                         </p>
                                     </div>
                                 </div>
@@ -1225,23 +1280,33 @@ function ProfessionalOnboarding() {
                                     </p>
 
                                     <div className="mt-4 flex flex-wrap justify-center gap-2">
+                                        <input
+                                            ref={documentInputRef}
+                                            type="file"
+                                            accept=".pdf,image/jpeg,image/png"
+                                            onChange={handleAddDocument}
+                                            className="hidden"
+                                        />
                                         <button
                                             type="button"
-                                            onClick={() => handleAddDocument('Medical_Council_Registration.pdf', '1.8 MB', 'license')}
+                                            disabled={uploadingDocument}
+                                            onClick={() => { pendingDocumentTypeRef.current = 'license'; documentInputRef.current?.click() }}
                                             className="rounded-xl border border-[#C4D7D4] bg-white px-3 py-1.5 text-xs font-semibold text-[#033135] shadow-xs hover:bg-[#E4F0EA]"
                                         >
                                             + Medical License (.pdf)
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => handleAddDocument('Degree_Certificate_MBBS_MD.pdf', '2.5 MB', 'degree')}
+                                            disabled={uploadingDocument}
+                                            onClick={() => { pendingDocumentTypeRef.current = 'degree'; documentInputRef.current?.click() }}
                                             className="rounded-xl border border-[#C4D7D4] bg-white px-3 py-1.5 text-xs font-semibold text-[#033135] shadow-xs hover:bg-[#E4F0EA]"
                                         >
                                             + Degree Certificate (.pdf)
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => handleAddDocument('Experience_Letter_Hospital.pdf', '950 KB', 'experience')}
+                                            disabled={uploadingDocument}
+                                            onClick={() => { pendingDocumentTypeRef.current = 'experience'; documentInputRef.current?.click() }}
                                             className="rounded-xl border border-[#C4D7D4] bg-white px-3 py-1.5 text-xs font-semibold text-[#033135] shadow-xs hover:bg-[#E4F0EA]"
                                         >
                                             + Experience Letter (.pdf)
@@ -1278,7 +1343,7 @@ function ProfessionalOnboarding() {
 
                                                     <button
                                                         type="button"
-                                                        onClick={() => handleRemoveDocument(doc.id)}
+                                                        onClick={() => handleRemoveDocument(doc)}
                                                         className="text-[#9AA6A0] transition hover:text-[#C0563B]"
                                                     >
                                                         <Trash2 size={16} />
@@ -1300,8 +1365,9 @@ function ProfessionalOnboarding() {
                             </div>
 
                             <div>
-                                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F8E7A5]/80 px-3 py-1 text-xs font-bold text-[#8B6D25]">
-                                    <Clock size={14} /> PENDING VERIFICATION
+                                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${isVerificationApproved ? 'bg-[#E4F0EA] text-[#2F7B58]' : 'bg-[#F8E7A5]/80 text-[#8B6D25]'}`}>
+                                    {isVerificationApproved ? <CheckCircle2 size={14} /> : <Clock size={14} />}
+                                    {verificationLabel.toUpperCase()}
                                 </span>
                                 <h1
                                     className="mt-3 text-3xl font-bold text-[#033135] sm:text-4xl"

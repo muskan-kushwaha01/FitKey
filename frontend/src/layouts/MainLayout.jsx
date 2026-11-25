@@ -5,6 +5,8 @@ import {
     useNavigate,
     useLocation,
 } from 'react-router-dom'
+import toast from 'react-hot-toast'
+import { signOut } from '../services/authService'
 
 import {
     Home,
@@ -58,9 +60,16 @@ function MainLayout() {
         setMobileMenuOpen(false)
     }, [location.pathname])
 
-    const handleLogout = () => {
-        // Actual authentication logout will be connected with Supabase later.
-        navigate('/login')
+    const handleLogout = async () => {
+        try {
+            await signOut()
+            toast.success('Logged out successfully.')
+        } catch (error) {
+            console.error('Logout error:', error)
+            toast.error(error?.message || 'Failed to log out.')
+        } finally {
+            navigate('/login')
+        }
     }
 
     // Sidebar navigation items

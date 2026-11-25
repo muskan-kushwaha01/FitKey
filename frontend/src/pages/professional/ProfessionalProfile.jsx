@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useOutletContext, useNavigate } from 'react-router-dom'
 import {
     X,
@@ -17,6 +17,7 @@ import {
     Lock,
     Sparkles,
     Copy,
+    Upload,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ProfessionalProfileHeader from '../../components/professional/ProfessionalProfileHeader.jsx'
@@ -26,13 +27,16 @@ import {
     getPosts,
     deletePost,
 } from '../../services/professional/professionalContentService.js'
-import { updateProfessionalProfile } from '../../services/professional/professionalProfileService.js'
+import {
+    updateProfessionalProfile,
+    uploadProfessionalAvatar,
+} from '../../services/professional/professionalProfileService.js'
 import {
     getRatingSummary,
     getReviewsForProfessional,
 } from '../../services/professional/professionalReviewService.js'
 import {
-    getConsultationSettings,
+    fetchConsultationSettings,
     saveConsultationSettings,
     DAYS_OF_WEEK,
     DURATION_OPTIONS,
@@ -60,6 +64,9 @@ function ProfessionalProfile() {
     const [posts, setPosts] = useState([])
     const [editModalOpen, setEditModalOpen] = useState(false)
     const [editTab, setEditTab] = useState('profile') // 'profile' | 'consultations'
+    const [savingEdit, setSavingEdit] = useState(false)
+    const [uploadingAvatar, setUploadingAvatar] = useState(false)
+    const avatarInputRef = useRef(null)
     const [ratingSummary, setRatingSummary] = useState({ avg: 0, total: 0, distribution: {} })
     const [reviews, setReviews] = useState([])
 
@@ -82,19 +89,28 @@ function ProfessionalProfile() {
     // Consultation preferences state
     const [consultationSettings, setConsultationSettingsState] = useState(null)
 
-    const loadPosts = useCallback(() => {
+    const loadPosts = useCallback(async () => {
         if (!professional) return
-        const myPosts = getPosts({ professionalId: professional.id })
-        setPosts(myPosts)
-        setRatingSummary(getRatingSummary(professional.id))
-        setReviews(getReviewsForProfessional(professional.id))
+        try {
+            const [myPosts, summary, reviewList] = await Promise.all([
+                getPosts({ professionalId: professional.id }),
+                getRatingSummary(professional.id),
+                getReviewsForProfessional(professional.id),
+            ])
+            setPosts(Array.isArray(myPosts) ? myPosts : [])
+            setRatingSummary(summary)
+            setReviews(Array.isArray(reviewList) ? reviewList : [])
+        } catch (error) {
+            console.error('[ProfessionalProfile] Failed to load profile content:', error)
+            toast.error(error?.message || 'Could not load professional content.')
+        }
     }, [professional])
 
     useEffect(() => {
         loadPosts()
     }, [loadPosts])
 
-    const handleOpenEdit = () => {
+    const handleOpenEdit = async () => {
         if (!professional) return
         setEditForm({
             fullName: professional.fullName || professional.name || '',
@@ -103,7 +119,7 @@ function ProfessionalProfile() {
             specialization: professional.specialization || '',
             bio: professional.bio || '',
             qualifications: professional.qualifications || '',
-            yearsExperience: professional.yearsExperience || '',
+            yearsExperience: professional.yearsExperience ?? '',
             licenseNumber: professional.licenseNumber || '',
             workplaceName: professional.workplaceName || '',
             workplaceAddress: professional.workplaceAddress || '',
@@ -111,11 +127,35 @@ function ProfessionalProfile() {
             state: professional.state || '',
         })
 
-        // Fetch current consultation settings
-        const currentConsult = getConsultationSettings(professional.id)
-        setConsultationSettingsState(currentConsult)
         setEditTab('profile')
         setEditModalOpen(true)
+
+        const res = await fetchConsultationSettings(professional.id)
+        if (res.settings) {
+            setConsultationSettingsState(res.settings)
+        }
+    }
+
+    const handleAvatarFileChange = async (e) => {
+        const file = e.target.files?.[0]
+        e.target.value = ''
+        if (!file || !professional?.id) return
+
+        setUploadingAvatar(true)
+        try {
+            const res = await uploadProfessionalAvatar(professional.id, file)
+            if (!res.success) {
+                toast.error(res.error || 'Failed to upload profile photo.')
+                return
+            }
+            setEditForm((prev) => ({ ...prev, photoUrl: res.photoUrl }))
+            if (setProfessional && res.professional) setProfessional(res.professional)
+            toast.success(res.message || 'Profile photo updated!')
+        } catch (err) {
+            toast.error(err?.message || 'Could not upload photo.')
+        } finally {
+            setUploadingAvatar(false)
+        }
     }
 
     const handleToggleScheduleDay = (dayKey) => {
@@ -162,9 +202,9 @@ function ProfessionalProfile() {
         toast.success(`Applied hours (${template.startTime} - ${template.endTime}) to all days`)
     }
 
-    const handleSaveEdit = (e) => {
+    const handleSaveEdit = async (e) => {
         e.preventDefault()
-        if (!professional) return
+        if (!professional || savingEdit) return
 
         if (!editForm.fullName.trim()) {
             toast.error('Name cannot be empty.')
@@ -192,26 +232,37 @@ function ProfessionalProfile() {
             }
         }
 
-        // 1. Update Core Profile
-        const res = updateProfessionalProfile(professional.id, editForm)
-        if (!res.success) {
-            toast.error(res.error || 'Failed to update profile.')
-            return
-        }
+        setSavingEdit(true)
+        try {
+            // 1. Update Core Profile
+            const res = await updateProfessionalProfile(professional.id, editForm)
+            if (!res.success) {
+                toast.error(res.error || 'Failed to update profile.')
+                return
+            }
 
-        // 2. Save Consultation Settings
-        if (consultationSettings) {
-            saveConsultationSettings(professional.id, consultationSettings)
-        }
+            // 2. Save Consultation Settings
+            if (consultationSettings) {
+                const consultRes = await saveConsultationSettings(professional.id, consultationSettings)
+                if (!consultRes.success) {
+                    toast.error(consultRes.error || 'Failed to save consultation settings.')
+                    return
+                }
+            }
 
-        toast.success('Profile & consultation settings saved successfully!')
-        if (setProfessional) setProfessional(res.professional)
-        setEditModalOpen(false)
+            toast.success('Profile & consultation settings saved successfully!')
+            if (setProfessional && res.professional) setProfessional(res.professional)
+            setEditModalOpen(false)
+        } catch (err) {
+            toast.error(err?.message || 'Failed to save changes.')
+        } finally {
+            setSavingEdit(false)
+        }
     }
 
-    const handleDeletePost = (postId) => {
+    const handleDeletePost = async (postId) => {
         if (!professional) return
-        const res = deletePost(postId, professional.id)
+        const res = await deletePost(postId, professional.id)
         if (res.success) {
             toast.success(res.message)
             loadPosts()
@@ -364,7 +415,23 @@ function ProfessionalProfile() {
                                                 )}
                                             </div>
                                             <div className="flex-1 space-y-1">
-                                                <div className="flex gap-1.5">
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                    <input
+                                                        ref={avatarInputRef}
+                                                        type="file"
+                                                        accept="image/jpeg,image/png,image/webp,image/gif"
+                                                        onChange={handleAvatarFileChange}
+                                                        className="hidden"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        disabled={uploadingAvatar}
+                                                        onClick={() => avatarInputRef.current?.click()}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-[#DCE7E3] bg-[#FAFBF9] px-2.5 py-1 text-[11px] font-semibold text-[#033135] hover:bg-[#E4F0EA] transition disabled:opacity-50"
+                                                    >
+                                                        <Upload size={12} />
+                                                        <span>{uploadingAvatar ? 'Uploading...' : 'Upload Photo'}</span>
+                                                    </button>
                                                     {AVATARS.map((url, i) => (
                                                         <button
                                                             key={i}
@@ -730,10 +797,11 @@ function ProfessionalProfile() {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="flex items-center gap-1.5 rounded-xl bg-[#033135] px-5 py-2 text-xs font-bold text-white hover:bg-[#324C4D] transition"
+                                    disabled={savingEdit}
+                                    className="flex items-center gap-1.5 rounded-xl bg-[#033135] px-5 py-2 text-xs font-bold text-white hover:bg-[#324C4D] transition disabled:opacity-50"
                                 >
                                     <Save size={14} />
-                                    <span>Save All Changes</span>
+                                    <span>{savingEdit ? 'Saving...' : 'Save All Changes'}</span>
                                 </button>
                             </div>
                         </form>

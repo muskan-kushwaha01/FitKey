@@ -1,793 +1,305 @@
-// userConsultationService.js
-// Handles user-side consultation discovery, health-profile based recommendations,
-// professional filtering, appointment history, and dummy payment records.
+import { supabase } from '../../lib/supabase.js'
 
-import {
-  getItem,
-  setItem,
-  STORAGE_KEYS,
-  generateId,
-} from '../storageService.js'
-import { getAvailableXP, spendXP } from '../xpService.js'
-import { getProfessionals, saveProfessionals } from '../professional/professionalAuthService.js'
-import {
-  getConsultationSettings,
-  saveConsultationSettings,
-  getAppointments,
-  updateAppointmentStatus,
-  generateDaySlots,
-} from '../professional/professionalConsultationService.js'
-import { getRatingSummary, getReviewsForProfessional } from '../professional/professionalReviewService.js'
+export const MAX_XP_DISCOUNT_PERCENT = 0.5
+export const MAX_XP_DISCOUNT_POINTS = 200
 
-export const USER_CONSULTATION_STORAGE_KEYS = {
-  USER_PAYMENTS: 'fk_user_consultation_payments',
-  USER_HEALTH_PROFILE: 'fk_user_health_profile',
+function normalizeProfile(row) {
+  const p = row?.profile || {}
+  const rating = row?.rating || {}
+  const professional = {
+    id: p.id,
+    fullName: p.full_name || 'Healthcare Professional',
+    name: p.full_name || 'Healthcare Professional',
+    displayName: p.full_name || 'Healthcare Professional',
+    photoUrl: p.avatar_url || '',
+    bio: p.bio || '',
+    profession: p.profession || 'Healthcare Professional',
+    specialization: p.specialization || '',
+    qualifications: p.qualification || '',
+    yearsExperience: Number(p.experience_years || 0),
+    workplaceName: p.workplace_name || '',
+    workplaceAddress: p.workplace_address || '',
+    city: p.city || '',
+    state: p.state || '',
+    onboardingCompleted: true,
+    verificationStatus: 'verified',
+    consultation: {
+      fee: Number(p.consultation_fee || 0),
+      durationMinutes: Number(p.duration_minutes || 20),
+      bufferMinutes: Number(p.buffer_minutes || 0),
+      timezone: p.timezone || 'Asia/Kolkata',
+      offerPhoneConsultations: Boolean(p.offer_phone_consultations),
+      hasSlotsToday: false,
+    },
+    consultationSettings: {
+      consultationsEnabled: Boolean(p.consultations_enabled),
+      consultationFee: Number(p.consultation_fee || 0),
+      durationMinutes: Number(p.duration_minutes || 20),
+      bufferMinutes: Number(p.buffer_minutes || 0),
+      timezone: p.timezone || 'Asia/Kolkata',
+      blockedDates: p.blocked_dates || [],
+      blockedSlots: p.blocked_slots || [],
+      dateOverrides: p.date_overrides || {},
+    },
+    availability: row?.availability || [],
+    bookedSlots: p.booked_slots || [],
+    ratingSummary: { avg: Number(rating.avg || 0), total: Number(rating.total || 0) },
+  }
+  professional.consultation.hasSlotsToday = buildSlots(professional, getLocalDateString()).length > 0
+  return professional
 }
 
-// ─── Default Verified Professional Roster (for discovery) ─────────────────────
-
-const SEED_PROFESSIONALS = [
-  {
-    id: 'prof_demo_001',
-    name: 'Dr. Ananya Sharma',
-    fullName: 'Dr. Ananya Sharma',
-    email: 'dr.ananya@fitkey.com',
-    phone: '+91 98765 43210',
-    photoUrl: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=400',
-    bio: 'Senior Consultant Cardiologist & Preventive Wellness Specialist with 10+ years of clinical practice.',
-    profession: 'Doctor / Medical Practitioner',
-    specialization: 'Cardiology & Preventive Medicine',
-    qualifications: 'MBBS, MD (Medicine), DM (Cardiology)',
-    yearsExperience: 10,
-    licenseNumber: 'MCI-2014-98421',
-    workplaceName: 'Metro Heart Institute & Wellness Center',
-    workplaceAddress: 'Sector 44, Institutional Area',
-    city: 'Gurugram',
-    state: 'Haryana',
-    onboardingCompleted: true,
-    verificationStatus: 'Verified Practitioner',
-    healthFocusAreas: ['Cardiovascular Health', 'Hypertension', 'Lipid Management', 'Heart Rate Recovery'],
-    createdAt: '2026-01-01T10:00:00.000Z',
-  },
-  {
-    id: 'prof_demo_002',
-    name: 'Dr. Rohan Varma',
-    fullName: 'Dr. Rohan Varma',
-    email: 'dr.rohan@fitkey.com',
-    phone: '+91 98111 55667',
-    photoUrl: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=400',
-    bio: 'Orthopaedic Rehabilitation & Sports Medicine Consultant specializing in endurance athletes and joint health.',
-    profession: 'Doctor / Medical Practitioner',
-    specialization: 'Sports Medicine & Joint Care',
-    qualifications: 'MBBS, MS (Ortho), Fellowship in Sports Medicine',
-    yearsExperience: 12,
-    licenseNumber: 'KMC-2012-77123',
-    workplaceName: 'Apex Center for Orthopaedics & Sports Health',
-    workplaceAddress: 'Indiranagar 100ft Road',
-    city: 'Bengaluru',
-    state: 'Karnataka',
-    onboardingCompleted: true,
-    verificationStatus: 'Verified Practitioner',
-    healthFocusAreas: ['Injury Rehabilitation', 'Joint Health', 'Posture & Ergonomics', 'Athletic Training'],
-    createdAt: '2026-01-05T10:00:00.000Z',
-  },
-  {
-    id: 'prof_demo_003',
-    name: 'Priya Nambiar',
-    fullName: 'Priya Nambiar',
-    email: 'priya.diet@fitkey.com',
-    phone: '+91 98222 66778',
-    photoUrl: 'https://images.unsplash.com/photo-1594824813589-982855140880?auto=format&fit=crop&q=80&w=400',
-    bio: 'Certified Clinical Dietitian and Certified Diabetes Educator helping clients achieve metabolic flexibility.',
-    profession: 'Clinical Nutritionist & Dietitian',
-    specialization: 'Metabolic Nutrition & Diabetes',
-    qualifications: 'M.Sc. Clinical Nutrition, CDE, RD',
-    yearsExperience: 8,
-    licenseNumber: 'IDA-2016-4432',
-    workplaceName: 'NutriWell Clinic & Diabetes Center',
-    workplaceAddress: 'Bandra West, Hill Road',
-    city: 'Mumbai',
-    state: 'Maharashtra',
-    onboardingCompleted: true,
-    verificationStatus: 'Verified Practitioner',
-    healthFocusAreas: ['Weight Management', 'Blood Sugar Control', 'Gut Health', 'Dietary Nutrition'],
-    createdAt: '2026-01-10T10:00:00.000Z',
-  },
-  {
-    id: 'prof_demo_004',
-    name: 'Dr. Kabir Mehta',
-    fullName: 'Dr. Kabir Mehta',
-    email: 'dr.kabir@fitkey.com',
-    phone: '+91 98333 77889',
-    photoUrl: 'https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&q=80&w=400',
-    bio: 'Senior Psychiatrist focusing on sleep hygiene, chronic stress mitigation, and mind-body resilience.',
-    profession: 'Doctor / Medical Practitioner',
-    specialization: 'Sleep Medicine & Behavioral Health',
-    qualifications: 'MBBS, MD (Psychiatry), Member of IPS',
-    yearsExperience: 14,
-    licenseNumber: 'DMC-2010-33901',
-    workplaceName: 'Mind & Sleep Medicine Clinic',
-    workplaceAddress: 'Vasant Vihar Institutional Area',
-    city: 'Delhi NCR',
-    state: 'Delhi',
-    onboardingCompleted: true,
-    verificationStatus: 'Verified Practitioner',
-    healthFocusAreas: ['Sleep Optimization', 'Stress Resilience', 'Mental Wellness', 'Burnout Recovery'],
-    createdAt: '2026-01-12T10:00:00.000Z',
-  },
-  {
-    id: 'prof_demo_005',
-    name: 'Shreya Kulkarni',
-    fullName: 'Shreya Kulkarni',
-    email: 'shreya.physio@fitkey.com',
-    phone: '+91 98444 88990',
-    photoUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=400',
-    bio: 'Musculoskeletal Physiotherapist focused on spine alignment, ergonomic correction, and active mobility.',
-    profession: 'Physiotherapist',
-    specialization: 'Spine & Postural Physiotherapy',
-    qualifications: 'BPT, MPT (Musculoskeletal Disorders)',
-    yearsExperience: 6,
-    licenseNumber: 'IAP-2018-88219',
-    workplaceName: 'RehabMotion Physical Therapy Clinic',
-    workplaceAddress: 'Koregaon Park, North Main Road',
-    city: 'Pune',
-    state: 'Maharashtra',
-    onboardingCompleted: true,
-    verificationStatus: 'Verified Practitioner',
-    healthFocusAreas: ['Back & Neck Pain', 'Ergonomics', 'Mobility & Flexibility', 'Core Stability'],
-    createdAt: '2026-01-15T10:00:00.000Z',
-  },
-]
-
-// Default consultation settings for each seeded doctor
-const SEED_CONSULTATION_SETTINGS = {
-  prof_demo_001: {
-    consultationsEnabled: true,
-    offerPhoneConsultations: true,
-    consultationFee: 650,
-    durationMinutes: 20,
-    bufferMinutes: 5,
-    timezone: 'Asia/Kolkata',
-  },
-  prof_demo_002: {
-    consultationsEnabled: true,
-    offerPhoneConsultations: true,
-    consultationFee: 800,
-    durationMinutes: 30,
-    bufferMinutes: 5,
-    timezone: 'Asia/Kolkata',
-  },
-  prof_demo_003: {
-    consultationsEnabled: true,
-    offerPhoneConsultations: true,
-    consultationFee: 500,
-    durationMinutes: 20,
-    bufferMinutes: 5,
-    timezone: 'Asia/Kolkata',
-  },
-  prof_demo_004: {
-    consultationsEnabled: true,
-    offerPhoneConsultations: true,
-    consultationFee: 1200,
-    durationMinutes: 30,
-    bufferMinutes: 10,
-    timezone: 'Asia/Kolkata',
-  },
-  prof_demo_005: {
-    consultationsEnabled: true,
-    offerPhoneConsultations: true,
-    consultationFee: 450,
-    durationMinutes: 20,
-    bufferMinutes: 0,
-    timezone: 'Asia/Kolkata',
-  },
+function getLocalDateString(date = new Date()) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
-// ─── Initial Dummy Consultation Payments Linked to Bookings ──────────────────
+function asMinutes(value) {
+  const [h, m] = String(value || '00:00').split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
 
-const INITIAL_USER_PAYMENTS = [
-  {
-    id: 'pay_user_001',
-    bookingReference: 'BK-2026-9481',
-    appointmentId: 'apt_demo_001',
-    professionalId: 'prof_demo_001',
-    professionalName: 'Dr. Ananya Sharma',
-    professionalSpecialization: 'Cardiology & Preventive Medicine',
-    professionalPhoto: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=400',
-    originalFee: 650,
-    xpDiscount: 50, // 50 XP redeemed for ₹50 discount
-    amountPaid: 600,
-    currency: 'INR',
-    paymentMethod: 'UPI (Google Pay)',
-    transactionId: 'TXN_UPI_983719248',
-    paymentDate: '2026-11-22T08:35:00.000Z',
-    appointmentDate: '2026-11-25',
-    appointmentTime: '11:15 AM',
-    paymentStatus: 'SUCCESSFUL', // 'SUCCESSFUL' | 'PENDING' | 'FAILED' | 'REFUNDED'
-    invoiceNumber: 'INV-FK-2026-081',
-  },
-  {
-    id: 'pay_user_002',
-    bookingReference: 'BK-2026-8312',
-    appointmentId: 'apt_demo_003',
-    professionalId: 'prof_demo_001',
-    professionalName: 'Dr. Ananya Sharma',
-    professionalSpecialization: 'Cardiology & Preventive Medicine',
-    professionalPhoto: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=400',
-    originalFee: 650,
-    xpDiscount: 0,
-    amountPaid: 650,
-    currency: 'INR',
-    paymentMethod: 'Credit Card (Visa •••• 4012)',
-    transactionId: 'TXN_CARD_77218390',
-    paymentDate: '2026-11-18T10:05:00.000Z',
-    appointmentDate: '2026-11-20',
-    appointmentTime: '02:00 PM',
-    paymentStatus: 'SUCCESSFUL',
-    invoiceNumber: 'INV-FK-2026-072',
-  },
-  {
-    id: 'pay_user_003',
-    bookingReference: 'BK-2026-7294',
-    appointmentId: 'apt_demo_005',
-    professionalId: 'prof_demo_002',
-    professionalName: 'Dr. Rohan Varma',
-    professionalSpecialization: 'Sports Medicine & Joint Care',
-    professionalPhoto: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=400',
-    originalFee: 800,
-    xpDiscount: 100,
-    amountPaid: 700,
-    currency: 'INR',
-    paymentMethod: 'UPI (PhonePe)',
-    transactionId: 'TXN_UPI_66192837',
-    paymentDate: '2026-11-14T09:15:00.000Z',
-    appointmentDate: '2026-11-15',
-    appointmentTime: '10:30 AM',
-    paymentStatus: 'REFUNDED',
-    refundReason: 'Appointment cancelled due to physician emergency duties. Full refund credited.',
-    invoiceNumber: 'INV-FK-2026-065',
-  },
-  {
-    id: 'pay_user_004',
-    bookingReference: 'BK-2026-6102',
-    appointmentId: 'apt_demo_007',
-    professionalId: 'prof_demo_003',
-    professionalName: 'Priya Nambiar',
-    professionalSpecialization: 'Metabolic Nutrition & Diabetes',
-    professionalPhoto: 'https://images.unsplash.com/photo-1594824813589-982855140880?auto=format&fit=crop&q=80&w=400',
-    originalFee: 500,
-    xpDiscount: 0,
-    amountPaid: 500,
-    currency: 'INR',
-    paymentMethod: 'UPI (Paytm)',
-    transactionId: 'TXN_UPI_55291847',
-    paymentDate: '2026-11-11T16:20:00.000Z',
-    appointmentDate: '2026-11-13',
-    appointmentTime: '04:00 PM',
-    paymentStatus: 'SUCCESSFUL',
-    invoiceNumber: 'INV-FK-2026-059',
-  },
-]
+function asTime(minutes) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+}
 
-// ─── Core Discovery Functions ────────────────────────────────────────────────
+function as12Hour(minutes) {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `${String(h % 12 || 12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
+}
 
-/**
- * Ensures the professionals list has our rich verified roster.
- */
-function ensureSeededProfessionals() {
-  const existing = getProfessionals()
-  let modified = false
-  const updated = [...existing]
+function buildSlots(professional, date) {
+  if (!professional?.id || !date) return []
+  const settings = professional.consultationSettings || {}
+  if (!settings.consultationsEnabled) return []
+  const override = settings.dateOverrides?.[date]
+  if (override?.unavailable || settings.blockedDates?.includes(date)) return []
+  const weekday = new Date(`${date}T12:00:00`).getDay()
+  const periods = override?.startTime && override?.endTime
+    ? [{ start_time: override.startTime, end_time: override.endTime }]
+    : (professional.availability || []).filter((a) => Number(a.day_of_week) === weekday && a.is_active !== false)
+  if (!periods.length) return []
 
-  for (const seed of SEED_PROFESSIONALS) {
-    const idx = updated.findIndex((p) => p.id === seed.id)
-    if (idx === -1) {
-      updated.push(seed)
-      modified = true
-    } else {
-      // Ensure photoUrl and verified status exist
-      if (!updated[idx].photoUrl || updated[idx].verificationStatus !== 'Verified Practitioner') {
-        updated[idx] = { ...updated[idx], ...seed }
-        modified = true
+  const duration = Number(professional.consultation?.durationMinutes || 20)
+  const buffer = Number(professional.consultation?.bufferMinutes || 0)
+  const step = duration + buffer
+  const blocked = new Set(settings.blockedSlots || [])
+  const appointments = (professional.bookedSlots || []).filter((a) => a.date === date)
+  const now = new Date()
+  const minToday = date === getLocalDateString() ? now.getHours() * 60 + now.getMinutes() : -1
+  const slots = []
+  for (const period of periods) {
+    for (let start = asMinutes(period.start_time); start + duration <= asMinutes(period.end_time); start += step) {
+      const time24 = asTime(start)
+      const end = start + duration
+      const occupied = appointments.some((apt) =>
+        start < asMinutes(apt.end_time) + buffer && end + buffer > asMinutes(apt.start_time)
+      )
+      if (!occupied && !blocked.has(`${date}_${time24}`) && start > minToday) {
+        slots.push({ date, time24, time12: as12Hour(start), durationMinutes: duration })
       }
     }
-
-    // Ensure consultation settings exist and enabled
-    const s = getConsultationSettings(seed.id)
-    if (!s.consultationsEnabled && SEED_CONSULTATION_SETTINGS[seed.id]) {
-      saveConsultationSettings(seed.id, SEED_CONSULTATION_SETTINGS[seed.id])
-    }
   }
-
-  if (modified) {
-    saveProfessionals(updated)
-  }
-  return updated
+  return slots
 }
 
-/**
- * Get all professionals available for consultation.
- * Only returns professionals who:
- * 1. Have onboarding completed
- * 2. Have consultationEnabled: true in their consultation settings
- */
-export function getConsultationProfessionals() {
-  const allProfs = ensureSeededProfessionals()
-  const result = []
-
-  for (const prof of allProfs) {
-    if (!prof.onboardingCompleted) continue
-
-    const settings = getConsultationSettings(prof.id)
-    if (!settings.consultationsEnabled) continue
-
-    const ratingSummary = getRatingSummary(prof.id)
-    const todayIso = new Date().toISOString().split('T')[0]
-    const daySlots = generateDaySlots(prof.id, todayIso)
-    const availableTodaySlots = daySlots?.slots?.filter((s) => s.status === 'available') || []
-
-    result.push({
-      ...prof,
-      displayName: prof.fullName || prof.name,
-      ratingSummary: {
-        avg: ratingSummary.avg || 4.8,
-        total: ratingSummary.total || 14,
-      },
-      consultation: {
-        fee: settings.consultationFee || 500,
-        durationMinutes: settings.durationMinutes || 20,
-        bufferMinutes: settings.bufferMinutes || 5,
-        timezone: settings.timezone || 'Asia/Kolkata',
-        offerPhoneConsultations: settings.offerPhoneConsultations ?? true,
-        availableTodayCount: availableTodaySlots.length,
-        hasSlotsToday: availableTodaySlots.length > 0,
-      },
-    })
-  }
-
-  return result
+export async function getConsultationProfessionals() {
+  const { data, error } = await supabase.rpc('get_public_consultation_professionals')
+  if (error) throw new Error(error.message || 'Could not load available practitioners.')
+  return (Array.isArray(data) ? data : []).map(normalizeProfile)
 }
 
-/**
- * Get Recommended Professionals based on user wellness needs, location, and credentials.
- * Prioritizes verified credentials and relevant specialization over XP/popularity.
- * Never diagnoses users.
- */
-export function getRecommendedProfessionals(userProfile = {}) {
-  const all = getConsultationProfessionals()
-
-  // Extract user health goals & preferences
-  const userGoal = (userProfile.goal || 'Overall Wellness').toLowerCase()
-  const userCity = (userProfile.city || 'Gurugram').toLowerCase()
-
-  const scored = all.map((prof) => {
+export function getRecommendedProfessionals(userProfile = {}, professionals = []) {
+  const goal = String(userProfile.goal || '').toLowerCase()
+  const city = String(userProfile.city || '').toLowerCase()
+  return [...professionals].map((professional) => {
     let score = 0
     const reasons = []
-
-    // 1. Verified credential boost
-    if ((prof.verificationStatus || '').toLowerCase().includes('verified')) {
-      score += 25
-      reasons.push('Verified credentials')
+    const specialization = String(professional.specialization || '').toLowerCase()
+    if (goal && (specialization.includes(goal) || goal.split(/\W+/).some((word) => word.length > 3 && specialization.includes(word)))) {
+      score += 20
+      reasons.push('Matches your wellness focus')
     }
-
-    // 2. Specialization relevance to user wellness goals
-    const spec = (prof.specialization || '').toLowerCase()
-    const focusAreas = (prof.healthFocusAreas || []).map((f) => f.toLowerCase())
-
-    if (
-      userGoal.includes('heart') ||
-      userGoal.includes('cardio') ||
-      userGoal.includes('stamina')
-    ) {
-      if (spec.includes('cardio') || focusAreas.some((f) => f.includes('cardio'))) {
-        score += 35
-        reasons.push('Matches cardiovascular stamina goal')
-      }
-    } else if (
-      userGoal.includes('weight') ||
-      userGoal.includes('diet') ||
-      userGoal.includes('metabol')
-    ) {
-      if (spec.includes('nutrition') || spec.includes('diet')) {
-        score += 35
-        reasons.push('Matches nutritional & metabolic goals')
-      }
-    } else if (
-      userGoal.includes('joint') ||
-      userGoal.includes('strength') ||
-      userGoal.includes('active')
-    ) {
-      if (spec.includes('sports') || spec.includes('physio')) {
-        score += 35
-        reasons.push('Matches physical mobility & injury prevention')
-      }
-    } else {
-      // Overall Wellness
-      if (spec.includes('preventive') || spec.includes('nutrition') || spec.includes('wellness')) {
-        score += 30
-        reasons.push('Aligned with overall preventative wellness')
-      }
-    }
-
-    // 3. Location proximity
-    const profCity = (prof.city || '').toLowerCase()
-    if (profCity && userCity && (profCity.includes(userCity) || userCity.includes(profCity))) {
-      score += 15
-      reasons.push(`Practices in your area (${prof.city})`)
-    }
-
-    // 4. Experience & Ratings
-    const exp = Number(prof.yearsExperience) || 0
-    if (exp >= 10) score += 10
-    else if (exp >= 5) score += 5
-
-    const rating = prof.ratingSummary?.avg || 0
-    if (rating >= 4.5) score += 10
-
-    // 5. Active availability today
-    if (prof.consultation?.hasSlotsToday) {
+    if (city && String(professional.city || '').toLowerCase().includes(city)) {
       score += 10
-      reasons.push('Slots available today')
+      reasons.push(`Practices in ${professional.city}`)
     }
-
-    return {
-      ...prof,
-      recommendationScore: score,
-      matchReason: reasons.slice(0, 2).join(' · '),
-    }
-  })
-
-  // Sort by recommendation score descending
-  return scored.sort((a, b) => b.recommendationScore - a.recommendationScore).slice(0, 3)
+    score += Math.min(Number(professional.yearsExperience || 0), 10)
+    return { ...professional, recommendationScore: score, matchReason: reasons.slice(0, 2).join(' · ') }
+  }).sort((a, b) => b.recommendationScore - a.recommendationScore).slice(0, 3)
 }
 
-/**
- * Filter professionals based on search query and criteria.
- */
 export function filterProfessionals(list, {
-  searchQuery = '',
-  location = 'all',
-  feeRange = 'all',
-  ratingMin = 0,
-  availability = 'all',
-  specialization = 'all',
+  searchQuery = '', location = 'all', feeRange = 'all', ratingMin = 0,
+  availability = 'all', specialization = 'all',
 } = {}) {
   const q = searchQuery.trim().toLowerCase()
-
-  return list.filter((prof) => {
-    // 1. Search text (name, profession, specialization)
-    if (q) {
-      const name = (prof.displayName || '').toLowerCase()
-      const profession = (prof.profession || '').toLowerCase()
-      const spec = (prof.specialization || '').toLowerCase()
-      const workplace = (prof.workplaceName || '').toLowerCase()
-      const match = name.includes(q) || profession.includes(q) || spec.includes(q) || workplace.includes(q)
-      if (!match) return false
-    }
-
-    // 2. Location
-    if (location && location !== 'all') {
-      const city = (prof.city || '').toLowerCase()
-      const state = (prof.state || '').toLowerCase()
-      const locTarget = location.toLowerCase()
-      if (!city.includes(locTarget) && !state.includes(locTarget)) return false
-    }
-
-    // 3. Fee range
-    const fee = prof.consultation?.fee || 0
+  return list.filter((p) => {
+    if (q && ![p.displayName, p.profession, p.specialization, p.workplaceName].some((v) => String(v || '').toLowerCase().includes(q))) return false
+    if (location !== 'all' && ![p.city, p.state].some((v) => String(v || '').toLowerCase().includes(location.toLowerCase()))) return false
+    const fee = Number(p.consultation?.fee || 0)
     if (feeRange === 'under_500' && fee > 500) return false
     if (feeRange === '500_1000' && (fee < 500 || fee > 1000)) return false
     if (feeRange === 'above_1000' && fee < 1000) return false
-
-    // 4. Rating minimum
-    const rating = prof.ratingSummary?.avg || 0
-    if (ratingMin > 0 && rating < ratingMin) return false
-
-    // 5. Availability
-    if (availability === 'today' && !prof.consultation?.hasSlotsToday) return false
-
-    // 6. Specialization filter
-    if (specialization && specialization !== 'all') {
-      const spec = (prof.specialization || '').toLowerCase()
-      if (!spec.includes(specialization.toLowerCase())) return false
-    }
-
+    if (ratingMin > 0 && Number(p.ratingSummary?.avg || 0) < ratingMin) return false
+    if (availability === 'today' && !p.consultation?.hasSlotsToday) return false
+    if (specialization !== 'all' && !String(p.specialization || '').toLowerCase().includes(specialization.toLowerCase())) return false
     return true
   })
 }
 
-// ─── User Consultation History API ───────────────────────────────────────────
+export async function getAvailableSlotsForDate(professionalId, dateString) {
+  const byDate = await getAvailableSlotsForDateRange(professionalId, dateString, dateString)
+  return byDate[dateString] || []
+}
 
-/**
- * Get user consultation appointments.
- * Reads appointments from storage and pairs them with professional info.
- */
-export function getUserAppointments() {
-  const allProfs = ensureSeededProfessionals()
-  const profMap = {}
-  allProfs.forEach((p) => { profMap[p.id] = p })
+export async function getAvailableSlotsForDateRange(professionalId, startDate, endDate) {
+  const { data, error } = await supabase.rpc('get_public_professional_booking_data', {
+    p_professional_id: professionalId,
+    p_start_date: startDate,
+    p_end_date: endDate,
+  })
+  if (error) throw new Error(error.message || 'Could not load current appointment availability.')
+  if (!data?.profile) return {}
+  const professional = normalizeProfile({
+    profile: { ...data.profile, booked_slots: data.booked_slots || [] },
+    availability: data.availability,
+    rating: {},
+  })
+  const slotsByDate = {}
+  const start = new Date(`${startDate}T12:00:00`)
+  const end = new Date(`${endDate}T12:00:00`)
+  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const date = getLocalDateString(cursor)
+    slotsByDate[date] = buildSlots(professional, date)
+  }
+  return slotsByDate
+}
 
-  // Read all system appointments
-  const allApts = getItem(STORAGE_KEYS.PROF_APPOINTMENTS, [])
+export async function bookConsultationAppointment({
+  professionalId, date, time24, patientName, patientPhone, phoneConsented,
+  patientAge, patientGender, notes, healthDetails,
+}) {
+  if (!professionalId || !date || !time24) return { success: false, error: 'Choose a practitioner and an available appointment slot.' }
+  if (!patientName?.trim()) return { success: false, error: 'Patient name is required.' }
+  if (String(patientPhone || '').replace(/\D/g, '').length < 10) return { success: false, error: 'Enter a valid 10-digit phone number.' }
+  if (!phoneConsented) return { success: false, error: 'Phone consultation consent is required.' }
+  const { data, error } = await supabase.rpc('book_patient_appointment', {
+    p_professional_id: professionalId,
+    p_appointment_date: date,
+    p_start_time: time24,
+    p_patient_name: patientName.trim(),
+    p_patient_phone: String(patientPhone).replace(/\D/g, ''),
+    p_phone_consented: true,
+    p_patient_age: patientAge ? Number(patientAge) : null,
+    p_patient_gender: patientGender || null,
+    p_notes: notes?.trim() || null,
+    p_health_details: {
+      blood_group: healthDetails?.bloodGroup || null,
+      allergies: healthDetails?.allergies || [],
+      current_medications: healthDetails?.currentMedications || [],
+      chief_complaint: healthDetails?.chiefComplaint || null,
+    },
+  })
+  if (error) {
+    console.error('[userConsultationService] book_patient_appointment failed:', {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    })
+    const details = error.details ? ` ${error.details}` : ''
+    return { success: false, error: `${error.message || 'Could not save this appointment.'}${details}` }
+  }
+  if (!data?.success || !data?.appointment) return { success: false, error: data?.error || 'Could not save this appointment.' }
+  const row = data.appointment
+  const minute = asMinutes(row.start_time)
+  return {
+    success: true,
+    booking: {
+      bookingReference: `FK-${String(row.id).slice(0, 8).toUpperCase()}`,
+      appointment: {
+        id: row.id, professionalId: row.professional_id, patientName: row.patient_name,
+        patientPhone: row.patient_phone, date: String(row.appointment_date).slice(0, 10),
+        time: as12Hour(minute), time24: String(row.start_time).slice(0, 5),
+        fee: Number(row.fee || 0), status: row.status === 'confirmed' ? 'upcoming' : row.status,
+        paymentStatus: 'pending',
+      },
+      amountDue: Number(row.fee || 0),
+      paymentStatus: 'pending',
+    },
+  }
+}
 
-  return allApts.map((apt) => {
-    const prof = profMap[apt.professionalId] || {}
-    // Link to payment if exists
-    const payments = getUserPaymentHistory()
-    const payment = payments.find((p) => p.appointmentId === apt.id || p.bookingReference?.includes(apt.id?.slice(-3)))
+export async function getUserAppointments() {
+  const { data: auth, error: authError } = await supabase.auth.getUser()
+  if (authError || !auth?.user?.id) throw new Error('Sign in to view your consultations.')
+  const { data: rows, error } = await supabase.from('appointments').select('*').eq('user_id', auth.user.id)
+    .order('appointment_date', { ascending: false }).order('start_time', { ascending: false })
+  if (error) throw new Error(error.message || 'Could not load your appointments.')
 
+  const profMap = new Map()
+  try {
+    const professionals = await getConsultationProfessionals()
+    professionals.forEach((p) => profMap.set(p.id, p))
+  } catch (err) {
+    console.warn('[userConsultationService] Could not load the professional directory:', err)
+  }
+  const missingIds = [...new Set((rows || []).map((r) => r.professional_id).filter((id) => id && !profMap.has(id)))]
+  await Promise.all(missingIds.map(async (id) => {
+    const { data } = await supabase.rpc('get_public_professional_summary', { p_user_id: id })
+    if (data) profMap.set(id, {
+      id, displayName: data.full_name || 'Healthcare Professional', fullName: data.full_name || 'Healthcare Professional',
+      specialization: data.specialization || '', photoUrl: data.avatar_url || '',
+      workplaceName: data.workplace_name || '', city: data.city || '',
+    })
+  }))
+
+  const consultationResult = rows?.length
+    ? await supabase.from('consultations').select('appointment_id, payment_status').in('appointment_id', rows.map((r) => r.id))
+    : { data: [], error: null }
+  if (consultationResult.error) throw new Error(consultationResult.error.message || 'Could not load consultation status.')
+  const paymentByAppointment = new Map((consultationResult.data || []).map((c) => [c.appointment_id, c.payment_status]))
+  return (rows || []).map((row) => {
+    const professional = profMap.get(row.professional_id) || {}
+    const minute = asMinutes(row.start_time)
     return {
-      ...apt,
-      bookingReference: payment?.bookingReference || `BK-2026-${apt.id?.slice(-4).toUpperCase() || '7102'}`,
-      professionalName: prof.fullName || prof.name || 'Verified Practitioner',
-      professionalSpecialization: prof.specialization || 'Healthcare Consultant',
-      professionalPhoto: prof.photoUrl || '',
-      professionalWorkplace: prof.workplaceName || 'FitKey Telehealth Partner',
-      professionalCity: prof.city || 'India',
-      fee: apt.fee || 650,
-      paymentStatus: payment?.paymentStatus || 'SUCCESSFUL',
+      id: row.id, professionalId: row.professional_id,
+      professionalName: professional.displayName || professional.fullName || 'Healthcare Professional',
+      professionalSpecialization: professional.specialization || '', professionalPhoto: professional.photoUrl || '',
+      professionalWorkplace: professional.workplaceName || '', professionalCity: professional.city || '',
+      patientName: row.patient_name || '', patientPhone: row.phone_consented ? row.patient_phone || '' : '',
+      bookingReference: `FK-${String(row.id).slice(0, 8).toUpperCase()}`,
+      date: String(row.appointment_date).slice(0, 10), time: as12Hour(minute), time24: String(row.start_time).slice(0, 5),
+      fee: Number(row.fee || 0),
+      durationMinutes: Number(row.duration_minutes || 20),
+      status: String(row.status || '').toLowerCase() === 'confirmed' ? 'upcoming' : String(row.status || '').toLowerCase(),
+      paymentStatus: String(paymentByAppointment.get(row.id) || row.payment_status || 'pending').toUpperCase(),
+      notes: row.notes || '', bookedAt: row.booked_at || row.created_at,
     }
   })
 }
 
-/**
- * Cancel a user appointment.
- * Syncs with professionalConsultationService to free up the slot.
- */
-export function cancelUserAppointment(appointmentId, reason = 'Cancelled by user') {
-  const appointments = getItem(STORAGE_KEYS.PROF_APPOINTMENTS, [])
-  const apt = appointments.find((a) => a.id === appointmentId)
-  if (!apt) return { success: false, error: 'Appointment not found.' }
-
-  const res = updateAppointmentStatus(appointmentId, apt.professionalId, 'cancelled', reason)
-  if (res.success) {
-    // Also update payment record if exists
-    const payments = getUserPaymentHistory()
-    const pIdx = payments.findIndex((p) => p.appointmentId === appointmentId)
-    if (pIdx !== -1) {
-      payments[pIdx] = {
-        ...payments[pIdx],
-        paymentStatus: 'REFUNDED',
-        refundReason: 'User cancelled appointment. Refund credited to original payment source.',
-      }
-      setItem(USER_CONSULTATION_STORAGE_KEYS.USER_PAYMENTS, payments)
-    }
-    return { success: true }
-  }
-  return res
+export async function getUserPaymentHistory() {
+  // Payment processing is not configured; never present fabricated transactions or receipts.
+  return []
 }
 
-/**
- * Get user dummy payment records.
- */
-export function getUserPaymentHistory() {
-  const data = getItem(USER_CONSULTATION_STORAGE_KEYS.USER_PAYMENTS, null)
-  if (!data) {
-    setItem(USER_CONSULTATION_STORAGE_KEYS.USER_PAYMENTS, INITIAL_USER_PAYMENTS)
-    return INITIAL_USER_PAYMENTS
-  }
-  return data
+export async function cancelUserAppointment(appointmentId, reason = 'Cancelled by patient') {
+  const { data, error } = await supabase.rpc('cancel_patient_appointment', { p_appointment_id: appointmentId, p_reason: reason })
+  if (error) return { success: false, error: error.message || 'Could not cancel this appointment.' }
+  if (!data?.success) return { success: false, error: data?.error || 'Could not cancel this appointment.' }
+  return { success: true, appointment: data.appointment }
 }
 
-// ─── Booking & Rescheduling API ──────────────────────────────────────────────
-
-export const MAX_XP_DISCOUNT_PERCENT = 0.5 // Max 50% of the consultation fee
-export const MAX_XP_DISCOUNT_POINTS = 200 // Max 200 XP can be redeemed per consultation (₹200 discount)
-export const XP_TO_INR_RATIO = 1 // 1 XP = ₹1 discount
-
-/**
- * Calculate eligible XP discount and final payable amount.
- */
-export function calculateXpDiscount(fee, requestedXp = 0) {
-  const availableXP = getAvailableXP()
-  const maxByFee = Math.floor(fee * MAX_XP_DISCOUNT_PERCENT)
-  const maxEligibleXP = Math.max(0, Math.min(maxByFee, MAX_XP_DISCOUNT_POINTS, availableXP))
-  const appliedXP = Math.max(0, Math.min(Number(requestedXp) || 0, maxEligibleXP))
-  const discountAmount = appliedXP * XP_TO_INR_RATIO
-  const finalAmount = Math.max(0, fee - discountAmount)
-
-  return {
-    availableXP,
-    maxEligibleXP,
-    appliedXP,
-    discountAmount,
-    finalAmount,
-  }
-}
-
-/**
- * Retrieve available slots for a specific date.
- */
-export function getAvailableSlotsForDate(professionalId, dateString) {
-  if (!professionalId || !dateString) return []
-  const dayData = generateDaySlots(professionalId, dateString)
-  if (!dayData || dayData.isBlockedDate || dayData.isOffDay) return []
-  return (dayData.slots || []).filter((s) => s.status === 'available')
-}
-
-/**
- * Complete appointment booking flow.
- * - Deducts eligible XP discount
- * - Adds to professional's upcoming appointments
- * - Locks the slot on the calendar
- * - Adds to user appointment and payment history
- */
-export function bookConsultationAppointment({
-  professionalId,
-  date,
-  time24,
-  time12,
-  patientName,
-  patientPhone,
-  phoneConsented,
-  patientAge,
-  patientGender,
-  notes,
-  healthDetails,
-  xpPointsToRedeem = 0,
-  paymentMethod = 'UPI (Direct Tele-Payment)',
-}) {
-  if (!professionalId) return { success: false, error: 'Professional ID is required.' }
-  if (!date || !time24) return { success: false, error: 'Appointment date and slot time are required.' }
-  if (!patientName?.trim()) return { success: false, error: 'Patient name is required.' }
-
-  const cleanPhone = (patientPhone || '').replace(/\D/g, '')
-  if (cleanPhone.length < 10) {
-    return { success: false, error: 'Please provide a valid 10-digit mobile number for phone consultation.' }
-  }
-  if (!phoneConsented) {
-    return { success: false, error: 'Explicit consent to receive phone calls from practitioner is required.' }
-  }
-
-  // 1. Verify slot is still available
-  const availableSlots = getAvailableSlotsForDate(professionalId, date)
-  const matchedSlot = availableSlots.find((s) => s.time24 === time24)
-  if (!matchedSlot) {
-    return { success: false, error: 'The selected slot is no longer available. Please choose another time.' }
-  }
-
-  // 2. Load professional and consultation settings
-  const profs = ensureSeededProfessionals()
-  const prof = profs.find((p) => p.id === professionalId)
-  if (!prof) return { success: false, error: 'Practitioner not found.' }
-  const settings = getConsultationSettings(professionalId)
-  const fee = Number(settings.consultationFee) || 500
-
-  // 3. Calculate and apply XP discount
-  const { appliedXP, discountAmount, finalAmount } = calculateXpDiscount(fee, xpPointsToRedeem)
-  const bookingReference = `BK-2026-${Math.floor(1000 + Math.random() * 9000)}`
-  const appointmentId = `apt_${generateId()}`
-
-  if (appliedXP > 0) {
-    const spendRes = spendXP({
-      amount: appliedXP,
-      refId: bookingReference,
-      description: `Consultation fee discount for ${prof.fullName || prof.name}`,
-    })
-    if (!spendRes.success) {
-      return { success: false, error: 'Could not redeem XP discount. Please try booking without XP.' }
-    }
-  }
-
-  // 4. Create appointment
-  const newAppointment = {
-    id: appointmentId,
-    professionalId,
-    patientName: patientName.trim(),
-    patientPhone: patientPhone.trim(),
-    phoneConsented: true,
-    patientAge: Number(patientAge) || 28,
-    patientGender: patientGender || 'Prefer not to say',
-    date,
-    time: time12 || matchedSlot.time12,
-    time24,
-    durationMinutes: settings.durationMinutes || 20,
-    type: 'Phone Consultation',
-    fee,
-    status: 'upcoming',
-    notes: notes?.trim() || 'Direct telehealth phone consultation',
-    healthDetails: {
-      bloodGroup: healthDetails?.bloodGroup || '',
-      allergies: healthDetails?.allergies || [],
-      currentMedications: healthDetails?.currentMedications || [],
-      medicalHistory: healthDetails?.medicalHistory || [],
-      chiefComplaint: notes?.trim() || 'General health consultation',
-      sharedDocuments: healthDetails?.sharedDocuments || [],
-    },
-    cancellationReason: null,
-    bookedAt: new Date().toISOString(),
-  }
-
-  const allApts = getItem(STORAGE_KEYS.PROF_APPOINTMENTS, [])
-  allApts.push(newAppointment)
-  setItem(STORAGE_KEYS.PROF_APPOINTMENTS, allApts)
-
-  // 5. Create linked payment
-  const newPayment = {
-    id: `pay_${generateId()}`,
-    bookingReference,
-    appointmentId,
-    professionalId,
-    professionalName: prof.fullName || prof.name,
-    professionalSpecialization: prof.specialization,
-    professionalPhoto: prof.photoUrl,
-    originalFee: fee,
-    xpDiscount: discountAmount,
-    amountPaid: finalAmount,
-    currency: 'INR',
-    paymentMethod,
-    transactionId: `TXN_SIM_${Math.floor(10000000 + Math.random() * 90000000)}`,
-    paymentDate: new Date().toISOString(),
-    appointmentDate: date,
-    appointmentTime: time12 || matchedSlot.time12,
-    paymentStatus: 'SUCCESSFUL',
-    invoiceNumber: `INV-FK-2026-${Math.floor(100 + Math.random() * 900)}`,
-  }
-
-  const allPayments = getUserPaymentHistory()
-  allPayments.unshift(newPayment)
-  setItem(USER_CONSULTATION_STORAGE_KEYS.USER_PAYMENTS, allPayments)
-
-  return {
-    success: true,
-    booking: {
-      bookingReference,
-      appointment: newAppointment,
-      payment: newPayment,
-      discountApplied: discountAmount,
-      amountPaid: finalAmount,
-    },
-  }
-}
-
-/**
- * Reschedule an upcoming appointment to a new date and slot.
- */
-export function rescheduleAppointment(appointmentId, newDate, newTime24, newTime12) {
-  if (!appointmentId) return { success: false, error: 'Appointment ID is required.' }
-  if (!newDate || !newTime24) return { success: false, error: 'New appointment date and slot are required.' }
-
-  const appointments = getItem(STORAGE_KEYS.PROF_APPOINTMENTS, [])
-  const aptIndex = appointments.findIndex((a) => a.id === appointmentId)
-  if (aptIndex === -1) return { success: false, error: 'Appointment not found.' }
-  const currentApt = appointments[aptIndex]
-
-  if (currentApt.status !== 'upcoming') {
-    return { success: false, error: 'Only upcoming appointments can be rescheduled.' }
-  }
-
-  // Verify new slot is available
-  const availableSlots = getAvailableSlotsForDate(currentApt.professionalId, newDate)
-  const matchedSlot = availableSlots.find((s) => s.time24 === newTime24)
-  if (!matchedSlot) {
-    return { success: false, error: 'The chosen slot is unavailable. Please pick another time.' }
-  }
-
-  // Update appointment
-  appointments[aptIndex] = {
-    ...currentApt,
-    date: newDate,
-    time24: newTime24,
-    time: newTime12 || matchedSlot.time12,
-    rescheduledAt: new Date().toISOString(),
-  }
-  setItem(STORAGE_KEYS.PROF_APPOINTMENTS, appointments)
-
-  // Update linked payment
-  const payments = getUserPaymentHistory()
-  const pIndex = payments.findIndex((p) => p.appointmentId === appointmentId)
-  if (pIndex !== -1) {
-    payments[pIndex] = {
-      ...payments[pIndex],
-      appointmentDate: newDate,
-      appointmentTime: newTime12 || matchedSlot.time12,
-    }
-    setItem(USER_CONSULTATION_STORAGE_KEYS.USER_PAYMENTS, payments)
-  }
-
-  return {
-    success: true,
-    appointment: appointments[aptIndex],
-    message: `Rescheduled successfully to ${newDate} at ${newTime12 || matchedSlot.time12}.`,
-  }
+export async function rescheduleAppointment(appointmentId, newDate, newTime24) {
+  const { data, error } = await supabase.rpc('reschedule_patient_appointment', {
+    p_appointment_id: appointmentId, p_appointment_date: newDate, p_start_time: newTime24,
+  })
+  if (error) return { success: false, error: error.message || 'Could not reschedule this appointment.' }
+  if (!data?.success) return { success: false, error: data?.error || 'Could not reschedule this appointment.' }
+  return { success: true, appointment: data.appointment, message: 'Appointment rescheduled successfully.' }
 }

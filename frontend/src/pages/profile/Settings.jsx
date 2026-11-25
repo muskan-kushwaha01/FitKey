@@ -1,35 +1,65 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { toast } from 'react-hot-toast'
+import { useNavigate } from 'react-router-dom'
 import {
-    Bell, Moon, Globe, Lock, Eye, Smartphone,
-    ChevronRight, Settings as SettingsIcon, Volume2
+    Bell, Lock, Eye, ChevronRight, LogOut
 } from 'lucide-react'
+import { signOut } from '../../services/authService'
+import { useAuth } from '../../context/AuthContext.jsx'
+import { DEFAULT_NOTIFICATION_PREFERENCES, fetchNotificationPreferences, saveNotificationPreference } from '../../services/user/userSettingsService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 function Settings() {
-    const [settings, setSettings] = useState({
-        pushNotifications: true,
-        emailNotifications: false,
-        wellnessReminders: true,
-        communityUpdates: true,
-        soundEffects: false,
-        darkMode: false,
-    })
+    const navigate = useNavigate()
+    const { user } = useAuth()
+    const [settings, setSettings] = useState(DEFAULT_NOTIFICATION_PREFERENCES)
+    const [loadingSettings, setLoadingSettings] = useState(true)
+    const [savingKey, setSavingKey] = useState(null)
 
-    const toggleSetting = (key) => {
-        setSettings((prev) => ({
-            ...prev,
-            [key]: !prev[key],
-        }))
+    useEffect(() => {
+        let cancelled = false
+        if (!user?.id) return () => { cancelled = true }
+        fetchNotificationPreferences(user.id)
+            .then((preferences) => { if (!cancelled) setSettings(preferences) })
+            .catch((error) => { if (!cancelled) toast.error(error?.message || 'Could not load settings.') })
+            .finally(() => { if (!cancelled) setLoadingSettings(false) })
+        return () => { cancelled = true }
+    }, [user?.id])
+
+    const toggleSetting = async (key) => {
+        if (!user?.id || savingKey) return
+        const nextValue = !settings[key]
+        setSavingKey(key)
+        const result = await saveNotificationPreference(user.id, key, nextValue)
+        setSavingKey(null)
+        if (!result.success) {
+            toast.error(result.error || 'Could not save setting.')
+            return
+        }
+        setSettings(result.preferences)
+        toast.success('Preference saved to your account.')
     }
 
-    const Toggle = ({ enabled, onClick }) => (
+    const handleLogout = async () => {
+        try {
+            await signOut()
+            toast.success('Logged out successfully.')
+        } catch (error) {
+            console.error('Logout error:', error)
+            toast.error(error?.message || 'Failed to log out.')
+        } finally {
+            navigate('/login')
+        }
+    }
+
+    const Toggle = ({ enabled, onClick, disabled }) => (
         <button
             type="button"
             onClick={onClick}
+            disabled={disabled}
             aria-pressed={enabled}
-            className={`relative h-6 w-11 rounded-full transition ${enabled ? 'bg-[#033135]' : 'bg-[#D5DEDA]'
+            className={`relative h-6 w-11 rounded-full transition disabled:opacity-50 ${enabled ? 'bg-[#033135]' : 'bg-[#D5DEDA]'
                 }`}
         >
             <span
@@ -43,35 +73,22 @@ function Settings() {
         {
             key: 'pushNotifications',
             title: 'Push Notifications',
-            description: 'Receive notifications on your device',
+            description: 'Saved notification preference for this account',
         },
         {
             key: 'emailNotifications',
             title: 'Email Notifications',
-            description: 'Get important updates through email',
+            description: 'Saved email update preference for this account',
         },
         {
             key: 'wellnessReminders',
             title: 'Wellness Reminders',
-            description: 'Reminders for your daily wellness goals',
+            description: 'Saved wellness reminder preference for this account',
         },
         {
             key: 'communityUpdates',
             title: 'Community Updates',
-            description: 'Updates about posts and discussions',
-        },
-    ]
-
-    const preferenceItems = [
-        {
-            key: 'soundEffects',
-            title: 'Sound Effects',
-            description: 'Play sounds for app interactions',
-        },
-        {
-            key: 'darkMode',
-            title: 'Dark Mode',
-            description: 'Use a darker appearance',
+            description: 'Saved community update preference for this account',
         },
     ]
 
@@ -88,6 +105,7 @@ function Settings() {
             <Toggle
                 enabled={settings[item.key]}
                 onClick={() => toggleSetting(item.key)}
+                disabled={loadingSettings || savingKey === item.key}
             />
         </div>
     )
@@ -97,25 +115,13 @@ function Settings() {
             icon: Lock,
             title: 'Privacy & Security',
             description: 'Manage your privacy and account security',
-            path: '/privacy',
+            path: '/profile',
         },
         {
             icon: Eye,
             title: 'Data & Permissions',
             description: 'Understand how your data is used',
-            path: '/privacy',
-        },
-        {
-            icon: Smartphone,
-            title: 'Connected Devices',
-            description: 'Manage connected health and fitness devices',
-            path: null,
-        },
-        {
-            icon: Globe,
-            title: 'Language & Region',
-            description: 'Choose your preferred language',
-            path: null,
+            path: '/profile',
         },
     ]
 
@@ -149,39 +155,18 @@ function Settings() {
                     </div>
                 </div>
 
-                {notificationItems.map((item) => (
+                {loadingSettings ? <p className="py-4 text-xs text-[#647572]">Loading saved preferences…</p> : notificationItems.map((item) => (
                     <SettingRow key={item.key} item={item} />
                 ))}
-            </section>
-
-            {/* Preferences */}
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
-                <div className="mb-2 flex items-center gap-3">
-                    <div className="rounded-xl bg-[#DCD6F7] p-2.5 text-[#033135]">
-                        <SettingsIcon size={20} />
-                    </div>
-                    <div>
-                        <h2 className="font-bold text-[#033135]">App Preferences</h2>
-                        <p className="text-xs text-[#647572]">
-                            Customize how FitKey feels and works.
-                        </p>
-                    </div>
-                </div>
-
-                {preferenceItems.map((item) => (
-                    <SettingRow key={item.key} item={item} />
-                ))}
-
-                <div className="mt-3 rounded-xl bg-[#F8FAF7] p-3 text-xs leading-5 text-[#647572]">
-                    Appearance and sound preferences are currently demo controls.
-                    Dark mode is not applied across the app yet.
-                </div>
+                <p className="mt-3 rounded-xl bg-[#F8FAF7] p-3 text-xs leading-5 text-[#647572]">
+                    Preferences are saved to your account. Push and email delivery require notification providers that are not configured yet.
+                </p>
             </section>
 
             {/* Account */}
             <section className="rounded-2xl bg-white p-6 shadow-sm">
                 <div className="mb-3">
-                    <h2 className="font-bold text-[#033135]">Account & Devices</h2>
+                    <h2 className="font-bold text-[#033135]">Account</h2>
                     <p className="mt-1 text-xs text-[#647572]">
                         Manage your account preferences.
                     </p>
@@ -195,9 +180,7 @@ function Settings() {
                             key={item.title}
                             onClick={() => {
                                 if (item.path) {
-                                    window.location.href = item.path
-                                } else {
-                                    toast(`${item.title} settings coming soon.`)
+                                    navigate(item.path)
                                 }
                             }}
                             className="flex w-full items-center gap-3 border-b border-[#EEF1EE] py-4 text-left last:border-0"
@@ -219,26 +202,29 @@ function Settings() {
                         </button>
                     )
                 })}
+
+                <div className="mt-2 pt-2 border-t border-[#EEF1EE]">
+                    <button
+                        type="button"
+                        onClick={handleLogout}
+                        className="flex w-full items-center gap-3 py-3 text-left transition group"
+                    >
+                        <div className="rounded-xl bg-rose-50 p-2.5 text-rose-600 group-hover:bg-rose-100 transition">
+                            <LogOut size={19} />
+                        </div>
+
+                        <div className="flex-1">
+                            <h3 className="text-sm font-semibold text-rose-600">
+                                Log Out
+                            </h3>
+                            <p className="mt-0.5 text-xs text-[#647572]">
+                                Sign out of your FitKey account
+                            </p>
+                        </div>
+                    </button>
+                </div>
             </section>
 
-            {/* App information */}
-            <section className="rounded-2xl bg-[#E4F0EA] p-5">
-                <div className="flex items-center gap-3">
-                    <div className="rounded-xl bg-white p-3 text-[#033135]">
-                        <Volume2 size={22} />
-                    </div>
-                    <div>
-                        <h3 className="font-bold text-[#033135]">FitKey</h3>
-                        <p className="text-xs text-[#647572]">
-                            Your health. Your journey.
-                        </p>
-                    </div>
-                </div>
-                <p className="mt-4 text-xs text-[#647572]">
-                    Prototype version 1.0. Some settings will become functional
-                    when account and device integrations are connected.
-                </p>
-            </section>
         </div>
     )
 }

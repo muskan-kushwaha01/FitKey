@@ -10,6 +10,7 @@ import {
     ArrowRight
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { signUp, signIn } from '../../services/authService'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -32,7 +33,7 @@ function Auth({ initialMode = 'login' }) {
     const navigate = useNavigate()
 
     const [isLogin, setIsLogin] = useState(initialMode === 'login')
-
+    const [isSubmitting, setIsSubmitting] = useState(false)
     const [showPassword, setShowPassword] = useState(false)
 
     const [formData, setFormData] = useState({
@@ -49,15 +50,10 @@ function Auth({ initialMode = 'login' }) {
         })
     }
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault()
 
-        if (!isLogin) {
-            navigate('/journey-selection')
-            return
-        }
-
-        if (!formData.email || !formData.password) {
+        if (!formData.email.trim() || !formData.password) {
             toast.error('Please fill in all required fields')
             return
         }
@@ -77,12 +73,39 @@ function Auth({ initialMode = 'login' }) {
             return
         }
 
-        // Authentication will be connected to Supabase next.
-        toast.success(
-            isLogin
-                ? 'Login integration coming next!'
-                : 'Signup integration coming next!'
-        )
+        try {
+            setIsSubmitting(true)
+
+            if (isLogin) {
+                await signIn({
+                    email: formData.email.trim(),
+                    password: formData.password,
+                })
+
+                toast.success('Welcome back to FitKey!')
+                navigate('/home')
+
+            } else {
+                const data = await signUp({
+                    email: formData.email.trim(),
+                    password: formData.password,
+                    fullName: formData.name.trim(),
+                })
+
+                if (data.session) {
+                    toast.success('Account created successfully!')
+                    navigate('/journey-selection')
+                } else {
+                    toast.success('Account created! Please verify your email.')
+                }
+            }
+
+        } catch (error) {
+            console.error('Authentication error:', error)
+            toast.error(error.message || 'Something went wrong')
+        } finally {
+            setIsSubmitting(false)
+        }
     }
 
     return (
@@ -309,10 +332,17 @@ function Auth({ initialMode = 'login' }) {
 
                                 <button
                                     type="submit"
-                                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#033135] py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99]"
+                                    disabled={isSubmitting}
+                                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#033135] py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99] disabled:opacity-60"
                                 >
-                                    {isLogin ? 'Login' : 'Create account'}
-                                    <ArrowRight size={18} />
+                                    {isSubmitting
+                                        ? 'Please wait...'
+                                        : isLogin
+                                            ? 'Login'
+                                            : 'Create account'
+                                    }
+
+                                    {!isSubmitting && <ArrowRight size={18} />}
                                 </button>
 
                             </form>

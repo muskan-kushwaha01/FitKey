@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
-    getProfXPSummary,
+    getProfXPSummaryAsync,
     PROF_XP_RULES,
 } from '../../services/professional/professionalXpService.js'
 import {
@@ -50,15 +50,23 @@ export default function ProfessionalXP() {
     const [selectedCategory, setSelectedCategory] = useState('All')
     const [redeemingId, setRedeemingId] = useState(null)
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!professional?.id) return
-        const xpSummary = getProfXPSummary(professional.id)
-        const catalog = getProfRewardCatalog(professional.id)
-        const redList = getProfRedemptions(professional.id)
+        const [xpSummary, catalog, redList] = await Promise.all([
+            getProfXPSummaryAsync(professional.id),
+            getProfRewardCatalog(professional.id),
+            getProfRedemptions(professional.id),
+        ])
 
-        setSummary(xpSummary)
-        setRewards(catalog)
-        setRedemptions(redList)
+        setSummary({
+            availableXP: xpSummary.availableXP ?? 0,
+            lifetimeXP: xpSummary.lifetimeXP ?? 0,
+            redeemedXP: xpSummary.redeemedXP ?? 0,
+            monthlyXP: xpSummary.monthlyXP ?? 0,
+            transactions: xpSummary.transactions ?? [],
+        })
+        setRewards(Array.isArray(catalog) ? catalog : [])
+        setRedemptions(Array.isArray(redList) ? redList : [])
     }, [professional?.id])
 
     useEffect(() => {
@@ -70,7 +78,7 @@ export default function ProfessionalXP() {
         setSearchParams(tab === 'ledger' ? { tab: 'ledger' } : {})
     }
 
-    const handleRedeem = (item) => {
+    const handleRedeem = async (item) => {
         if (!professional?.id) return
 
         if (item.isClaimed) {
@@ -84,7 +92,7 @@ export default function ProfessionalXP() {
         }
 
         setRedeemingId(item.id)
-        const res = redeemProfReward(professional.id, item.id)
+        const res = await redeemProfReward(professional.id, item.id)
         setRedeemingId(null)
 
         if (res.success) {

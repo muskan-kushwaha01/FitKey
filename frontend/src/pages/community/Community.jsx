@@ -3,15 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import {
     Search, Plus, BookOpen, X,
     FileText, Video, MessageSquare, Layers,
-    RefreshCw, ArrowRight, Sparkles,
+    RefreshCw, ArrowRight,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getPublicFeedPosts } from '../../services/professional/professionalDiscoveryService.js'
-import ProfessionalPostCard, {
-    ReelPostCard,
-    ArticlePostCard,
-    DiscussionPostCard,
-} from '../../components/community/ProfessionalPostCard.jsx'
+import { useAuth } from '../../context/AuthContext.jsx'
+import { fetchApprovedCommunityFeed } from '../../services/communityService.js'
+import ProfessionalPostCard from '../../components/community/ProfessionalPostCard.jsx'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -24,28 +21,52 @@ const TABS = [
 
 function Community() {
     const navigate = useNavigate()
+    const { user } = useAuth()
+    const userId = user?.id || null
     const [activeTab, setActiveTab] = useState('all')
     const [search, setSearch] = useState('')
     const [posts, setPosts] = useState([])
     const [loading, setLoading] = useState(true)
+    const [loadError, setLoadError] = useState('')
+    const [refreshTick, setRefreshTick] = useState(0)
 
     const loadPosts = useCallback(() => {
         setLoading(true)
-        try {
-            const type = activeTab === 'all' ? 'all' : activeTab
-            const feedPosts = getPublicFeedPosts({ type, limit: 60 })
-            setPosts(feedPosts)
-        } catch (err) {
-            console.error('[Community] loadPosts error:', err)
-            toast.error('Could not load posts.')
-        } finally {
-            setLoading(false)
-        }
-    }, [activeTab])
+        setLoadError('')
+        setRefreshTick((t) => t + 1)
+    }, [])
+
+    const handleTabSelect = (tabKey) => {
+        if (tabKey === activeTab) return
+        setLoading(true)
+        setLoadError('')
+        setActiveTab(tabKey)
+    }
 
     useEffect(() => {
-        loadPosts()
-    }, [loadPosts])
+        let active = true
+        const type = activeTab === 'all' ? 'all' : activeTab
+        fetchApprovedCommunityFeed(userId, { type, limit: 60 })
+            .then((feedPosts) => {
+                if (!active) return
+                setPosts(feedPosts)
+                setLoadError('')
+            })
+            .catch((err) => {
+                if (!active) return
+                console.error('[Community] loadPosts error:', err)
+                setLoadError('Could not load community posts. Please try again.')
+                toast.error('Could not load posts.')
+            })
+            .finally(() => {
+                if (active) setLoading(false)
+            })
+        return () => { active = false }
+    }, [activeTab, userId, refreshTick])
+
+    const handlePostUpdated = useCallback((postId, patch) => {
+        setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, ...patch } : p)))
+    }, [])
 
     // Client-side search filter
     const query = search.trim().toLowerCase()
@@ -62,6 +83,7 @@ function Community() {
         : posts
 
     const handleNavigateToProfile = (professionalId) => {
+        if (!professionalId) return
         navigate(`/professional/public/${professionalId}`)
     }
 
@@ -131,7 +153,7 @@ function Community() {
                     return (
                         <button
                             key={tab.key}
-                            onClick={() => setActiveTab(tab.key)}
+                            onClick={() => handleTabSelect(tab.key)}
                             className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition sm:text-sm ${
                                 activeTab === tab.key
                                     ? 'bg-[#033135] text-white shadow-xs'
@@ -145,10 +167,21 @@ function Community() {
                 })}
             </div>
 
-            {/* Loading */}
+            {/* Loading / Error / Content */}
             {loading ? (
                 <div className="flex justify-center py-16">
                     <div className="h-7 w-7 animate-spin rounded-full border-2 border-[#033135] border-t-transparent" />
+                </div>
+            ) : loadError ? (
+                <div className="rounded-3xl bg-white px-6 py-12 text-center border border-[#E8EFEB] space-y-3">
+                    <p className="text-sm font-semibold text-[#033135]">{loadError}</p>
+                    <button
+                        onClick={loadPosts}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-[#033135] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#324C4D]"
+                    >
+                        <RefreshCw size={13} />
+                        Try again
+                    </button>
                 </div>
             ) : filteredPosts.length > 0 ? (
                 <div className="space-y-7">
@@ -169,7 +202,7 @@ function Community() {
                                             </h2>
                                         </div>
                                         <button
-                                            onClick={() => setActiveTab('reel')}
+                                            onClick={() => handleTabSelect('reel')}
                                             className="text-xs font-bold text-[#033135] hover:text-[#648C83] flex items-center gap-1 transition"
                                         >
                                             <span>See all ({reelsInFeed.length})</span>
@@ -184,6 +217,7 @@ function Community() {
                                                 <ProfessionalPostCard
                                                     post={reel}
                                                     onNavigateToProfile={handleNavigateToProfile}
+                                                    onPostUpdated={handlePostUpdated}
                                                 />
                                             </div>
                                         ))}
@@ -203,6 +237,7 @@ function Community() {
                                             key={post.id}
                                             post={post}
                                             onNavigateToProfile={handleNavigateToProfile}
+                                            onPostUpdated={handlePostUpdated}
                                         />
                                     ))}
                                 </div>
@@ -211,7 +246,7 @@ function Community() {
                     )}
 
                     {/* ── 2. REELS DEDICATED VIEW (Vertical 9:16 Shorts Grid) ── */}
-                    {activeTab === 'reel' && (
+                    {activeTab === 'reel' && !query && (
                         <section className="space-y-3">
                             <p className="text-xs text-[#647572]">
                                 Vertical video rehabilitation drills, clinical explainers, and daily micro-habits.
@@ -222,6 +257,7 @@ function Community() {
                                         key={post.id}
                                         post={post}
                                         onNavigateToProfile={handleNavigateToProfile}
+                                        onPostUpdated={handlePostUpdated}
                                     />
                                 ))}
                             </div>
@@ -229,7 +265,7 @@ function Community() {
                     )}
 
                     {/* ── 3. ARTICLES DEDICATED VIEW (Editorial Grid) ── */}
-                    {activeTab === 'article' && (
+                    {activeTab === 'article' && !query && (
                         <section className="space-y-3">
                             <p className="text-xs text-[#647572]">
                                 Evidence-based articles and preventive health guides published by accredited doctors and clinicians.
@@ -240,6 +276,7 @@ function Community() {
                                         key={post.id}
                                         post={post}
                                         onNavigateToProfile={handleNavigateToProfile}
+                                        onPostUpdated={handlePostUpdated}
                                     />
                                 ))}
                             </div>
@@ -247,7 +284,7 @@ function Community() {
                     )}
 
                     {/* ── 4. DISCUSSIONS DEDICATED VIEW (Conversational Forum Stream) ── */}
-                    {activeTab === 'discussion' && (
+                    {activeTab === 'discussion' && !query && (
                         <section className="space-y-3">
                             <p className="text-xs text-[#647572]">
                                 Clinical queries and patient wellness discussions started by healthcare professionals.
@@ -258,6 +295,7 @@ function Community() {
                                         key={post.id}
                                         post={post}
                                         onNavigateToProfile={handleNavigateToProfile}
+                                        onPostUpdated={handlePostUpdated}
                                     />
                                 ))}
                             </div>
@@ -276,6 +314,7 @@ function Community() {
                                         key={post.id}
                                         post={post}
                                         onNavigateToProfile={handleNavigateToProfile}
+                                        onPostUpdated={handlePostUpdated}
                                     />
                                 ))}
                             </div>

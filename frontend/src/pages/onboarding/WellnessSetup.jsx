@@ -1,7 +1,9 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { ArrowRight, ArrowLeft, ChevronDown, User, Ruler, Weight, Droplets } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useAuth } from '../../context/AuthContext'
+import { supabase } from '../../lib/supabase'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -104,15 +106,56 @@ function WeightInput({ value, onChange }) {
 
 function WellnessSetup() {
     const navigate = useNavigate()
+    const location = useLocation()
+    const { user } = useAuth()
 
-    const [age, setAge] = useState('')
-    const [sex, setSex] = useState('')
-    const [height, setHeight] = useState(170)
-    const [weight, setWeight] = useState(70)
-    const [bloodGroup, setBloodGroup] = useState('')
+    const journey = location.state?.journey || null
 
-    const handleSubmit = (e) => {
+    const [age, setAge] = useState(location.state?.age ?? '')
+    const [sex, setSex] = useState(location.state?.sex ?? '')
+    const [height, setHeight] = useState(location.state?.height ?? 170)
+    const [weight, setWeight] = useState(location.state?.weight ?? 70)
+    const [bloodGroup, setBloodGroup] = useState(location.state?.bloodGroup ?? '')
+    const [isSaving, setIsSaving] = useState(false)
+
+    useEffect(() => {
+        if (!user?.id) return
+        let isMounted = true
+
+        async function fetchExistingProfile() {
+            try {
+                const { data, error } = await supabase
+                    .from('health_profiles')
+                    .select('gender, height_cm, weight_kg')
+                    .eq('user_id', user.id)
+                    .maybeSingle()
+
+                if (error) {
+                    console.error('Error fetching existing health profile:', error)
+                    return
+                }
+
+                if (data && isMounted) {
+                    if (data.gender && !location.state?.sex) setSex(data.gender)
+                    if (data.height_cm && !location.state?.height) setHeight(Number(data.height_cm))
+                    if (data.weight_kg && !location.state?.weight) setWeight(Number(data.weight_kg))
+                }
+            } catch (err) {
+                console.error('Failed to load existing profile:', err)
+            }
+        }
+
+        fetchExistingProfile()
+        return () => {
+            isMounted = false
+        }
+    }, [user?.id])
+
+    const handleSubmit = async (e) => {
         e.preventDefault()
+
+        if (isSaving) return
+
         if (!age || Number(age) < 13 || Number(age) > 100) {
             toast.error('Please enter an age between 13 and 100')
             return
@@ -121,7 +164,52 @@ function WellnessSetup() {
             toast.error('Please select your biological sex')
             return
         }
-        navigate('/health-history', { state: { age, sex, height, weight, bloodGroup } })
+
+        const currentUserId = user?.id || (await supabase.auth.getUser()).data?.user?.id
+        if (!currentUserId) {
+            toast.error('You must be logged in to save your wellness setup.')
+            return
+        }
+
+        setIsSaving(true)
+
+        try {
+            const { error } = await supabase
+                .from('health_profiles')
+                .upsert(
+                    {
+                        user_id: currentUserId,
+                        gender: sex,
+                        height_cm: Number(height),
+                        weight_kg: Number(weight),
+                        updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: 'user_id' }
+                )
+
+            if (error) {
+                console.error('Error saving health profile:', error)
+                toast.error(error.message || 'Failed to save wellness details. Please try again.')
+                return
+            }
+
+            navigate('/health-history', {
+                state: {
+                    ...(location.state || {}),
+                    journey,
+                    age,
+                    sex,
+                    height,
+                    weight,
+                    bloodGroup,
+                },
+            })
+        } catch (err) {
+            console.error('Unexpected error saving health profile:', err)
+            toast.error('An unexpected error occurred while saving. Please try again.')
+        } finally {
+            setIsSaving(false)
+        }
     }
 
     return (
@@ -142,7 +230,7 @@ function WellnessSetup() {
 
                 {/* Header */}
                 <div className="mb-5 flex items-center justify-between">
-                    <button type="button" onClick={() => navigate('/journey-selection')}
+                    <button type="button" onClick={() => navigate('/journey-selection', { state: { ...(location.state || {}), journey } })}
                         className="flex items-center gap-2 text-sm text-[#647572] transition hover:text-[#033135]">
                         <ArrowLeft size={18} /> Back
                     </button>
@@ -278,8 +366,19 @@ function WellnessSetup() {
                     {/* CTA */}
                     <div className="pt-2 pb-8">
                         <button type="submit"
-                            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#033135] py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99]">
-                            Continue <ArrowRight size={19} />
+                            disabled={isSaving}
+                            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#033135] py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed">
+                            {isSaving ? (
+                                <>
+                                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    <span>Saving...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span>Continue</span>
+                                    <ArrowRight size={19} />
+                                </>
+                            )}
                         </button>
                         <p className="mt-3 text-center text-xs text-[#647572]">Your data is private and secure.</p>
                     </div>

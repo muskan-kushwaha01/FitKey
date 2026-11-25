@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
     Stethoscope,
     Menu,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useAuth } from '../context/AuthContext.jsx'
 import {
-    getCurrentProfessional,
+    fetchCurrentProfessional,
+    migrateLegacyProfessionalData,
 } from '../services/professional/professionalAuthService.js'
-import { isOnboardingCompleted } from '../services/professional/professionalProfileService.js'
 import { ProfessionalBottomNav } from '../components/professional/ProfessionalNav/ProfessionalBottomNav.jsx'
 import ProfessionalSidebar from '../components/professional/ProfessionalSidebar.jsx'
 
@@ -17,38 +18,59 @@ const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 function ProfessionalLayout() {
     const navigate = useNavigate()
     const location = useLocation()
+    const { user, loading: authLoading } = useAuth()
     const [professional, setProfessional] = useState(null)
     const [loading, setLoading] = useState(true)
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
+    const refreshProfessional = useCallback(async () => {
+        if (!user?.id) return null
+        const prof = await fetchCurrentProfessional(user)
+        if (prof) setProfessional(prof)
+        return prof
+    }, [user])
+
     useEffect(() => {
-        const prof = getCurrentProfessional()
-        if (!prof) {
+        if (authLoading) return
+        if (!user?.id) {
             toast.error('Please log in to the Professional Portal.')
             navigate('/professional/login', { replace: true })
             return
         }
 
-        if (!isOnboardingCompleted(prof.id)) {
-            toast('Please complete your profile setup.', { icon: 'ℹ️' })
-            navigate('/professional/onboarding', { replace: true })
-            return
+        let cancelled = false
+        async function loadProf() {
+            setLoading(true)
+            await migrateLegacyProfessionalData(user)
+            const prof = await fetchCurrentProfessional(user)
+            if (cancelled) return
+
+            if (!prof) {
+                toast.error('Please log in to the Professional Portal.')
+                navigate('/professional/login', { replace: true })
+                return
+            }
+
+            if (!prof.onboardingCompleted) {
+                toast('Please complete your profile setup.', { icon: 'ℹ️' })
+                navigate('/professional/onboarding', { replace: true })
+                return
+            }
+
+            setProfessional(prof)
+            setLoading(false)
         }
 
-        setProfessional(prof)
-        setLoading(false)
-    }, [navigate, location.pathname])
+        loadProf()
+        return () => {
+            cancelled = true
+        }
+    }, [authLoading, user, navigate, location.pathname])
 
     useEffect(() => {
         window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
         setMobileSidebarOpen(false)
     }, [location.pathname])
-
-    const handleLogout = () => {
-        logoutProfessional()
-        toast.success('Logged out from Professional Portal.')
-        navigate('/welcome')
-    }
 
     if (loading) {
         return (
@@ -124,7 +146,7 @@ function ProfessionalLayout() {
 
                 {/* Page Content */}
                 <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 pb-24 lg:pb-12">
-                    <Outlet context={{ professional, setProfessional }} />
+                    <Outlet context={{ professional, setProfessional, refreshProfessional }} />
                 </main>
             </div>
 

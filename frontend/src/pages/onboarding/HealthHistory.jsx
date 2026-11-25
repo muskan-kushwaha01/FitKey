@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
     ArrowRight, ArrowLeft, Plus, Trash2, Check, ChevronDown,
@@ -6,6 +6,8 @@ import {
     Pill, Stethoscope, Dumbbell, Moon, Coffee, Wind, Heart
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useAuth } from '../../context/AuthContext'
+import { supabase } from '../../lib/supabase'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -141,14 +143,24 @@ function SliderInput({ value, onChange, min, max, unit, label, step = 1, decimal
     )
 }
 
-function NavButtons({ onNext, nextLabel = 'Continue', onSkip }) {
+function NavButtons({ onNext, nextLabel = 'Continue', onSkip, isLoading = false }) {
     return (
         <div className="pb-8 pt-3 space-y-3">
             <button type="button" onClick={onNext}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#033135] py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99]">
-                {nextLabel} <ArrowRight size={19} />
+                disabled={isLoading}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#033135] py-4 font-semibold text-white transition hover:bg-[#324C4D] active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed">
+                {isLoading ? (
+                    <>
+                        <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        <span>Saving health profile...</span>
+                    </>
+                ) : (
+                    <>
+                        {nextLabel} <ArrowRight size={19} />
+                    </>
+                )}
             </button>
-            {onSkip && (
+            {onSkip && !isLoading && (
                 <button type="button" onClick={onSkip}
                     className="w-full rounded-2xl border border-[#E8EFEB] py-3 text-sm font-medium text-[#647572] transition hover:border-[#C4D7D4] hover:text-[#033135]">
                     Skip for now
@@ -191,57 +203,63 @@ function Step1MedicalConditions({ data, setData, onNext, onBack }) {
     const hasNone = data.conditions.includes('None')
     const hasConditions = data.conditions.length > 0 && !hasNone
 
-    return (
-        <div className="space-y-5">
-            <div className="fk-up mb-2">
-                <p className="mb-1 text-[11px] font-bold tracking-[0.18em] text-[#647572]">MEDICAL CONDITIONS</p>
-                <h2 className="text-3xl leading-tight text-[#033135] sm:text-4xl" style={{ fontFamily: SERIF }}>
-                    Any diagnosed conditions?
-                    <span className="ml-1 inline-block h-[0.12em] w-[0.12em] rounded-full bg-[#E0AE3A] align-baseline" />
-                </h2>
-                <p className="mt-2 text-sm text-[#647572]">Select all that apply.</p>
-            </div>
+            const handleSkip = () => {
+                const skipped = { conditions: ['None'], conditionDetails: [] }
+                setData(skipped)
+                onNext(skipped)
+            }
 
-            <Card>
-                <div className="flex flex-wrap gap-2">
-                    {CONDITIONS.map(c => (
-                        <OptionChip key={c} label={c} selected={data.conditions.includes(c)} onClick={() => toggle(c)} multi />
-                    ))}
-                </div>
-            </Card>
-
-            {/* Condition detail forms */}
-            {hasConditions && data.conditions.map((cond, idx) => (
-                <Card key={cond} delay={0.05 * idx}
-                    className="border-[#DCD6F7] bg-gradient-to-br from-white to-[#DCD6F7]/20">
-                    <p className="mb-3 font-semibold text-[#033135]">{cond}</p>
-                    <div className="space-y-3">
-                        <TextInput label="When were you diagnosed? (optional)"
-                            placeholder="e.g. 2018 or January 2020"
-                            value={(data.conditionDetails?.[idx]?.year) || ''}
-                            onChange={v => updateDetail(idx, 'year', v)} />
-                        <div>
-                            <p className="mb-2 text-xs font-semibold text-[#647572]">Currently under control?</p>
-                            <div className="flex gap-2">
-                                {['Yes', 'No', 'Not sure'].map(opt => (
-                                    <button key={opt} type="button"
-                                        onClick={() => updateDetail(idx, 'controlled', opt)}
-                                        className={`flex-1 rounded-xl border-2 py-2 text-xs font-semibold transition-all ${(data.conditionDetails?.[idx]?.controlled) === opt
-                                            ? 'border-[#033135] bg-[#E4F0EA] text-[#033135]'
-                                            : 'border-[#E8EFEB] text-[#647572] hover:border-[#C4D7D4]'
-                                            }`}>
-                                        {opt}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
+            return (
+                <div className="space-y-5">
+                    <div className="fk-up mb-2">
+                        <p className="mb-1 text-[11px] font-bold tracking-[0.18em] text-[#647572]">MEDICAL CONDITIONS</p>
+                        <h2 className="text-3xl leading-tight text-[#033135] sm:text-4xl" style={{ fontFamily: SERIF }}>
+                            Any diagnosed conditions?
+                            <span className="ml-1 inline-block h-[0.12em] w-[0.12em] rounded-full bg-[#E0AE3A] align-baseline" />
+                        </h2>
+                        <p className="mt-2 text-sm text-[#647572]">Select all that apply.</p>
                     </div>
-                </Card>
-            ))}
 
-            <NavButtons onNext={onNext} onSkip={() => { setData(d => ({ ...d, conditions: ['None'] })); onNext() }} />
-        </div>
-    )
+                    <Card>
+                        <div className="flex flex-wrap gap-2">
+                            {CONDITIONS.map(c => (
+                                <OptionChip key={c} label={c} selected={data.conditions.includes(c)} onClick={() => toggle(c)} multi />
+                            ))}
+                        </div>
+                    </Card>
+
+                    {/* Condition detail forms */}
+                    {hasConditions && data.conditions.map((cond, idx) => (
+                        <Card key={cond} delay={0.05 * idx}
+                            className="border-[#DCD6F7] bg-gradient-to-br from-white to-[#DCD6F7]/20">
+                            <p className="mb-3 font-semibold text-[#033135]">{cond}</p>
+                            <div className="space-y-3">
+                                <TextInput label="When were you diagnosed? (optional)"
+                                    placeholder="e.g. 2018 or January 2020"
+                                    value={(data.conditionDetails?.[idx]?.year) || ''}
+                                    onChange={v => updateDetail(idx, 'year', v)} />
+                                <div>
+                                    <p className="mb-2 text-xs font-semibold text-[#647572]">Currently under control?</p>
+                                    <div className="flex gap-2">
+                                        {['Yes', 'No', 'Not sure'].map(opt => (
+                                            <button key={opt} type="button"
+                                                onClick={() => updateDetail(idx, 'controlled', opt)}
+                                                className={`flex-1 rounded-xl border-2 py-2 text-xs font-semibold transition-all ${(data.conditionDetails?.[idx]?.controlled) === opt
+                                                    ? 'border-[#033135] bg-[#E4F0EA] text-[#033135]'
+                                                    : 'border-[#E8EFEB] text-[#647572] hover:border-[#C4D7D4]'
+                                                    }`}>
+                                                {opt}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </Card>
+                    ))}
+
+                    <NavButtons onNext={() => onNext()} onSkip={handleSkip} />
+                </div>
+            )
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -377,7 +395,11 @@ function Step2Medications({ data, setData, onNext }) {
                 )}
             </MedCard>
 
-            <NavButtons onNext={onNext} onSkip={onNext} />
+            <NavButtons onNext={() => onNext()} onSkip={() => {
+                const skipped = { ...data, takingMeds: data.takingMeds || 'No', inTreatment: data.inTreatment || 'No' }
+                setData(skipped)
+                onNext(skipped)
+            }} />
         </div>
     )
 }
@@ -455,7 +477,11 @@ function Step3Allergies({ data, setData, onNext }) {
                 </Card>
             ))}
 
-            <NavButtons onNext={onNext} onSkip={() => { setData(d => ({ ...d, allergies: ['No known allergies'] })); onNext() }} />
+            <NavButtons onNext={() => onNext()} onSkip={() => {
+                const skipped = { allergies: ['No known allergies'], allergyDetails: [] }
+                setData(skipped)
+                onNext(skipped)
+            }} />
         </div>
     )
 }
@@ -545,7 +571,11 @@ function Step4Injuries({ data, setData, onNext }) {
                 </Card>
             ))}
 
-            <NavButtons onNext={onNext} onSkip={() => { setData(d => ({ ...d, injuries: ['None'] })); onNext() }} />
+            <NavButtons onNext={() => onNext()} onSkip={() => {
+                const skipped = { injuries: ['None'], injuryDetails: [] }
+                setData(skipped)
+                onNext(skipped)
+            }} />
         </div>
     )
 }
@@ -660,7 +690,7 @@ function Step5Lifestyle({ data, setData, onNext }) {
                 </div>
             </Card>
 
-            <NavButtons onNext={onNext} onSkip={onNext} />
+            <NavButtons onNext={() => onNext()} onSkip={() => onNext()} />
         </div>
     )
 }
@@ -679,7 +709,7 @@ const INTOLERANCES = ['Lactose', 'Gluten', 'Other', 'None']
 const DEFICIENCIES = ['Iron', 'Vitamin B12', 'Vitamin D', 'Other', 'None']
 const DIGESTIVE = ['Acidity', 'Bloating', 'Constipation', 'Other', 'None']
 
-function Step6Diet({ data, setData, onNext }) {
+function Step6Diet({ data, setData, onNext, isSaving = false }) {
     const set = (f, v) => setData(d => ({ ...d, [f]: v }))
     const toggleMulti = (field, val) => setData(d => {
         const list = d[field] || []
@@ -687,6 +717,18 @@ function Step6Diet({ data, setData, onNext }) {
         const without = list.filter(x => x !== 'None' && x !== val)
         return { ...d, [field]: list.includes(val) ? without : [...without, val] }
     })
+
+    const handleSkip = () => {
+        const skipped = {
+            ...data,
+            dietPref: data.dietPref || 'vegetarian',
+            intolerances: data.intolerances?.length ? data.intolerances : ['None'],
+            deficiencies: data.deficiencies?.length ? data.deficiencies : ['None'],
+            digestive: data.digestive?.length ? data.digestive : ['None']
+        }
+        setData(skipped)
+        onNext(skipped)
+    }
 
     return (
         <div className="space-y-5">
@@ -769,7 +811,7 @@ function Step6Diet({ data, setData, onNext }) {
                 </div>
             </Card>
 
-            <NavButtons onNext={onNext} onSkip={onNext} />
+            <NavButtons onNext={() => onNext()} onSkip={handleSkip} isLoading={isSaving} />
         </div>
     )
 }
@@ -780,9 +822,12 @@ function Step6Diet({ data, setData, onNext }) {
 function HealthHistory() {
     const navigate = useNavigate()
     const location = useLocation()
+    const { user } = useAuth()
     const basicInfo = location.state || {}
 
     const [step, setStep] = useState(0) // 0..5 = steps 1-6
+    const [isSaving, setIsSaving] = useState(false)
+    const [cachedProfile, setCachedProfile] = useState(null)
 
     const [medicalConditions, setMedicalConditions] = useState({ conditions: [], conditionDetails: [] })
     const [medications, setMedications] = useState({ takingMeds: '', medications: [], inTreatment: '', supplements: [], uploadTypes: [] })
@@ -791,29 +836,333 @@ function HealthHistory() {
     const [lifestyle, setLifestyle] = useState({ sleepHours: 7, waterLitres: 2.0, sittingHours: 6 })
     const [diet, setDiet] = useState({ intolerances: [], deficiencies: [], digestive: [] })
 
-    const next = () => {
+    // Resolves basic info using location state first, then prefilled profile
+    const finalHeight = basicInfo.height != null ? basicInfo.height : cachedProfile?.height_cm
+    const finalWeight = basicInfo.weight != null ? basicInfo.weight : cachedProfile?.weight_kg
+    const finalGender = basicInfo.sex || cachedProfile?.gender
+    const finalAge = basicInfo.age != null ? basicInfo.age : cachedProfile?.age
+    const finalBloodGroup = basicInfo.bloodGroup || cachedProfile?.blood_group
+
+    // Prefetch existing health history if user already has saved records
+    useEffect(() => {
+        if (!user?.id) return
+        let isMounted = true
+
+        async function loadExistingData() {
+            try {
+                // 1. health_profiles
+                const { data: hp } = await supabase
+                    .from('health_profiles')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .maybeSingle()
+
+                if (hp && isMounted) {
+                    setCachedProfile(hp)
+
+                    setLifestyle(prev => ({
+                        ...prev,
+                        activityLevel: hp.activity_level || prev.activityLevel,
+                        sleepHours: hp.sleep_hours != null ? Number(hp.sleep_hours) : prev.sleepHours,
+                        waterLitres: hp.water_litres != null ? Number(hp.water_litres) : prev.waterLitres,
+                        sittingHours: hp.sitting_hours != null ? Number(hp.sitting_hours) : prev.sittingHours,
+                        smoking: hp.smoking || prev.smoking,
+                        alcohol: hp.alcohol || prev.alcohol,
+                        stress: hp.stress || prev.stress,
+                    }))
+
+                    setDiet(prev => ({
+                        ...prev,
+                        dietPref: hp.dietary_preference || prev.dietPref,
+                        mealsPerDay: hp.meals_per_day || prev.mealsPerDay,
+                        specificDiet: hp.specific_diet || prev.specificDiet,
+                        specificDietName: hp.specific_diet_name || prev.specificDietName,
+                        intolerances: Array.isArray(hp.intolerances) ? hp.intolerances : prev.intolerances,
+                        deficiencies: Array.isArray(hp.deficiencies) ? hp.deficiencies : prev.deficiencies,
+                        digestive: Array.isArray(hp.digestive_issues) ? hp.digestive_issues : prev.digestive,
+                    }))
+
+                    if (hp.in_treatment || (Array.isArray(hp.supplements) && hp.supplements.length > 0)) {
+                        setMedications(prev => ({
+                            ...prev,
+                            inTreatment: hp.in_treatment || prev.inTreatment,
+                            treatmentCondition: hp.treatment_condition || prev.treatmentCondition,
+                            treatmentType: hp.treatment_type || prev.treatmentType,
+                            treatmentRestrictions: hp.treatment_restrictions || prev.treatmentRestrictions,
+                            supplements: Array.isArray(hp.supplements) ? hp.supplements : prev.supplements,
+                        }))
+                    }
+                }
+
+                // 2. medical_conditions
+                const { data: conds } = await supabase
+                    .from('medical_conditions')
+                    .select('*')
+                    .eq('user_id', user.id)
+
+                if (conds && conds.length > 0 && isMounted) {
+                    setMedicalConditions({
+                        conditions: conds.map(c => c.condition_name),
+                        conditionDetails: conds.map(c => ({
+                            year: c.diagnosis_year || '',
+                            controlled: c.is_controlled || (c.status === 'Controlled' ? 'Yes' : c.status === 'Uncontrolled' ? 'No' : 'Not sure')
+                        }))
+                    })
+                }
+
+                // 3. medications
+                const { data: meds } = await supabase
+                    .from('medications')
+                    .select('*')
+                    .eq('user_id', user.id)
+
+                if (meds && meds.length > 0 && isMounted) {
+                    setMedications(prev => ({
+                        ...prev,
+                        takingMeds: 'Yes',
+                        medications: meds.map(m => ({
+                            name: m.medication_name || '',
+                            dosage: m.dosage || '',
+                            frequency: m.frequency || '',
+                            reason: m.reason || (m.notes?.startsWith('Reason: ') ? m.notes.replace('Reason: ', '') : '')
+                        }))
+                    }))
+                }
+
+                // 4. allergies
+                try {
+                    const { data: algs } = await supabase
+                        .from('allergies')
+                        .select('*')
+                        .eq('user_id', user.id)
+
+                    if (algs && algs.length > 0 && isMounted) {
+                        setAllergies({
+                            allergies: algs.map(a => a.allergy_type),
+                            allergyDetails: algs.map(a => ({
+                                allergen: a.allergen || '',
+                                reaction: a.reaction || '',
+                                severity: a.severity || 'Mild'
+                            }))
+                        })
+                    }
+                } catch {
+                    // Ignore if allergies table was not yet queried
+                }
+
+                // 5. injuries
+                try {
+                    const { data: injs } = await supabase
+                        .from('injuries')
+                        .select('*')
+                        .eq('user_id', user.id)
+
+                    if (injs && injs.length > 0 && isMounted) {
+                        setInjuries({
+                            injuries: injs.map(i => i.injury_type),
+                            injuryDetails: injs.map(i => ({
+                                bodyPart: i.body_part || '',
+                                status: i.status || 'Active',
+                                painDuringActivity: i.pain_during_activity || 'No',
+                                surgery: i.surgery || 'No'
+                            }))
+                        })
+                    }
+                } catch {
+                    // Ignore if injuries table was not yet queried
+                }
+            } catch (err) {
+                console.error('Failed to prefetch existing health history:', err)
+            }
+        }
+
+        loadExistingData()
+        return () => {
+            isMounted = false
+        }
+    }, [user?.id])
+
+    const handleSaveAndComplete = async (finalDietOverride) => {
+        if (isSaving) return
+
+        const currentUserId = user?.id || (await supabase.auth.getUser()).data?.user?.id
+        if (!currentUserId) {
+            toast.error('You must be logged in to save your health history.')
+            return
+        }
+
+        const currentDiet = finalDietOverride || diet
+        const currentMedicalConditions = medicalConditions
+        const currentMedications = medications
+        const currentAllergies = allergies
+        const currentInjuries = injuries
+        const currentLifestyle = lifestyle
+
+        setIsSaving(true)
+
+        try {
+            // Pair each selected condition with its original detail index FIRST, then filter out blanks/'None'
+            const conditionRows = (currentMedicalConditions.conditions || [])
+                .map((cond, idx) => ({
+                    cond,
+                    detail: currentMedicalConditions.conditionDetails?.[idx] || {},
+                }))
+                .filter(({ cond }) => cond && cond !== 'None' && cond.trim() !== '')
+                .map(({ cond, detail }) => ({
+                    condition_name: cond,
+                    diagnosis_year: detail.year?.trim() || null,
+                    is_controlled: detail.controlled || null,
+                    status: 'active',
+                    notes: detail.year ? `Diagnosed: ${detail.year}` : null,
+                }))
+
+            // Prepare medications rows (skip empty medication names)
+            const validMeds = currentMedications.takingMeds === 'Yes' && Array.isArray(currentMedications.medications)
+                ? currentMedications.medications.filter(m => m && m.name && m.name.trim() !== '')
+                : []
+            const medicationRows = validMeds.map(m => ({
+                medication_name: m.name.trim(),
+                dosage: m.dosage?.trim() || null,
+                frequency: m.frequency?.trim() || null,
+                reason: m.reason?.trim() || null,
+                status: 'active',
+            }))
+
+            // Pair each selected allergy with its original detail index FIRST, then filter out blanks/'No known allergies'
+            const allergyRows = (currentAllergies.allergies || [])
+                .map((alg, idx) => ({
+                    alg,
+                    detail: currentAllergies.allergyDetails?.[idx] || {},
+                }))
+                .filter(({ alg }) => alg && alg !== 'No known allergies' && alg.trim() !== '')
+                .map(({ alg, detail }) => ({
+                    allergy_type: alg,
+                    allergen: detail.allergen?.trim() || null,
+                    reaction: detail.reaction?.trim() || null,
+                    severity: detail.severity || null,
+                }))
+
+            // Pair each selected injury with its original detail index FIRST, then filter out blanks/'None'
+            const injuryRows = (currentInjuries.injuries || [])
+                .map((inj, idx) => ({
+                    inj,
+                    detail: currentInjuries.injuryDetails?.[idx] || {},
+                }))
+                .filter(({ inj }) => inj && inj !== 'None' && inj.trim() !== '')
+                .map(({ inj, detail }) => ({
+                    injury_type: inj,
+                    body_part: detail.bodyPart?.trim() || null,
+                    status: detail.status || null,
+                    pain_during_activity: detail.painDuringActivity || null,
+                    surgery: detail.surgery || null,
+                }))
+
+            // Prepare health_profiles payload
+            const profilePayload = {
+                ...(finalHeight != null ? { height_cm: Number(finalHeight) } : {}),
+                ...(finalWeight != null ? { weight_kg: Number(finalWeight) } : {}),
+                ...(finalGender ? { gender: finalGender } : {}),
+                ...(finalAge != null ? { age: Number(finalAge) } : {}),
+                ...(finalBloodGroup ? { blood_group: finalBloodGroup } : {}),
+                activity_level: currentLifestyle.activityLevel || null,
+                sleep_hours: currentLifestyle.sleepHours != null ? Number(currentLifestyle.sleepHours) : null,
+                water_litres: currentLifestyle.waterLitres != null ? Number(currentLifestyle.waterLitres) : null,
+                sitting_hours: currentLifestyle.sittingHours != null ? Number(currentLifestyle.sittingHours) : null,
+                smoking: currentLifestyle.smoking || null,
+                alcohol: currentLifestyle.alcohol || null,
+                stress: currentLifestyle.stress || null,
+                meals_per_day: currentDiet.mealsPerDay || null,
+                specific_diet: currentDiet.specificDiet || null,
+                specific_diet_name: currentDiet.specificDiet === 'Yes' ? (currentDiet.specificDietName?.trim() || null) : null,
+                intolerances: (currentDiet.intolerances || []).filter(x => x && x !== 'None'),
+                deficiencies: (currentDiet.deficiencies || []).filter(x => x && x !== 'None'),
+                digestive_issues: (currentDiet.digestive || []).filter(x => x && x !== 'None'),
+                supplements: (currentMedications.supplements || []).filter(x => x && x !== 'None'),
+                in_treatment: currentMedications.inTreatment || null,
+                treatment_condition: currentMedications.inTreatment === 'Yes' ? (currentMedications.treatmentCondition?.trim() || null) : null,
+                treatment_type: currentMedications.inTreatment === 'Yes' ? currentMedications.treatmentType || null : null,
+                treatment_restrictions: currentMedications.inTreatment === 'Yes' ? currentMedications.treatmentRestrictions || null : null,
+                dietary_preference: currentDiet.dietPref || null,
+                onboarding_completed: true,
+                updated_at: new Date().toISOString(),
+            }
+
+            // Execute atomic RPC as the single persistence mechanism
+            const { error: rpcError } = await supabase.rpc('save_health_history_onboarding', {
+                p_profile: profilePayload,
+                p_conditions: conditionRows,
+                p_medications: medicationRows,
+                p_allergies: allergyRows,
+                p_injuries: injuryRows,
+            })
+
+            if (rpcError) {
+                throw rpcError
+            }
+
+            toast.success('Health profile saved successfully!')
+            navigate('/all-done', {
+                state: {
+                    ...(location.state || {}),
+                    journey: basicInfo.journey || location.state?.journey || null,
+                },
+            })
+        } catch (err) {
+            console.error('Failed to save health history onboarding:', err)
+            toast.error(err.message || 'Failed to save health history. Please try again.')
+        } finally {
+            setIsSaving(false)
+        }
+    }
+
+    const next = (stepDataOverride) => {
+        if (step === 0 && stepDataOverride) {
+            setMedicalConditions(stepDataOverride)
+        } else if (step === 1 && stepDataOverride) {
+            setMedications(stepDataOverride)
+        } else if (step === 2 && stepDataOverride) {
+            setAllergies(stepDataOverride)
+        } else if (step === 3 && stepDataOverride) {
+            setInjuries(stepDataOverride)
+        } else if (step === 4 && stepDataOverride) {
+            setLifestyle(stepDataOverride)
+        }
+
         if (step < TOTAL_STEPS - 1) {
             setStep(s => s + 1)
             window.scrollTo({ top: 0, behavior: 'smooth' })
         } else {
-            const profile = { ...basicInfo, medicalConditions, medications, allergies, injuries, lifestyle, diet }
-            console.log('Complete health profile:', profile)
-            navigate('/all-done')
+            // Final step completion
+            handleSaveAndComplete(stepDataOverride)
         }
     }
 
     const back = () => {
-        if (step === 0) navigate('/wellness-setup')
-        else { setStep(s => s - 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+        if (step === 0) {
+            navigate('/wellness-setup', {
+                state: {
+                    ...(location.state || {}),
+                    journey: basicInfo.journey || location.state?.journey || null,
+                    age: finalAge,
+                    sex: finalGender,
+                    height: finalHeight,
+                    weight: finalWeight,
+                    bloodGroup: finalBloodGroup,
+                },
+            })
+        } else {
+            setStep(s => s - 1)
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+        }
     }
 
     const stepComponents = [
-        <Step1MedicalConditions data={medicalConditions} setData={setMedicalConditions} onNext={next} onBack={back} />,
-        <Step2Medications data={medications} setData={setMedications} onNext={next} />,
-        <Step3Allergies data={allergies} setData={setAllergies} onNext={next} />,
-        <Step4Injuries data={injuries} setData={setInjuries} onNext={next} />,
-        <Step5Lifestyle data={lifestyle} setData={setLifestyle} onNext={next} />,
-        <Step6Diet data={diet} setData={setDiet} onNext={next} />,
+        <Step1MedicalConditions data={medicalConditions} setData={setMedicalConditions} onNext={(d) => next(d)} onBack={back} />,
+        <Step2Medications data={medications} setData={setMedications} onNext={(d) => next(d)} />,
+        <Step3Allergies data={allergies} setData={setAllergies} onNext={(d) => next(d)} />,
+        <Step4Injuries data={injuries} setData={setInjuries} onNext={(d) => next(d)} />,
+        <Step5Lifestyle data={lifestyle} setData={setLifestyle} onNext={(d) => next(d)} />,
+        <Step6Diet data={diet} setData={setDiet} onNext={(d) => next(d)} isSaving={isSaving} />,
     ]
 
     return (

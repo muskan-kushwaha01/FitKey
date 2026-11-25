@@ -13,15 +13,21 @@ import {
     Flame,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../context/AuthContext'
+import { supabase } from '../../lib/supabase'
 import {
     getGoals,
+    hasPersistedGoals,
+    saveGoals,
     todaySteps,
     todayWaterTotal,
     todaySleep,
     todayActiveMinutes,
     overallProgress,
     getWeeklyHistory,
+    getCurrentStreak,
 } from '../../services/healthService'
+import { evaluateDailyChallenges } from '../../services/challengeService'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -48,58 +54,89 @@ function buildChart(data) {
     return { pts, line, area }
 }
 
-/* Combines 1–2 contextual suggestions based on current health data */
-function getCombinedRecommendation(healthData) {
+/* Combines 1–2 contextual suggestions based on current health data, health profile, and medical considerations */
+function getCombinedRecommendation(healthData, healthProfile = null, medicalConditions = []) {
     const { steps = 0, waterMl = 0, sleepHours = 0, activeMins = 0, goals = {} } = healthData
     const stepGoal = goals.steps || 8000
     const waterGoal = goals.waterMl || 2500
     const sleepGoal = goals.sleepHours || 8
     const activeGoal = goals.activeMinutes || 30
 
+    const isSedentary = healthProfile?.activity_level === 'Sedentary'
+    const highSitting = Number(healthProfile?.sitting_hours) >= 7
+
+    // Check relevant condition keywords for gentle safety consideration
+    const conditionNames = (medicalConditions || []).map((c) => (c.condition_name || '').toLowerCase())
+    const hasJointIssues = conditionNames.some((c) =>
+        c.includes('joint') || c.includes('back') || c.includes('knee') || c.includes('injury') || c.includes('arthritis')
+    )
+    const hasCardioOrHypertension = conditionNames.some((c) =>
+        c.includes('hypertension') || c.includes('cardio') || c.includes('blood pressure') || c.includes('heart')
+    )
+    const hasAsthmaOrRespiratory = conditionNames.some((c) =>
+        c.includes('asthma') || c.includes('respiratory') || c.includes('breath')
+    )
+
     const deficits = []
 
     // 1. Steps deficit
     if (steps < stepGoal) {
         const pct = (steps / stepGoal) * 100
-        deficits.push({
-            type: 'steps',
-            pct,
-            suggestion: pct < 40
+        let suggestion
+        if (hasJointIssues) {
+            suggestion = pct < 40
+                ? 'try a low-impact 10-minute stroll to gently protect your joints'
+                : 'a gentle walk will help you comfortably reach your step target'
+        } else if (isSedentary) {
+            suggestion = pct < 40
+                ? 'start with an easy 10-minute walk at a comfortable pace'
+                : 'a light walk will help you gently hit your daily step goal'
+        } else if (highSitting) {
+            suggestion = pct < 40
+                ? 'break up prolonged sitting with a 10-minute walk'
+                : 'a short walk will help counter sitting hours and reach your step goal'
+        } else {
+            suggestion = pct < 40
                 ? 'take a short 15-minute walk to get moving'
-                : 'a short walk will help you hit your daily step goal',
-        })
+                : 'a short walk will help you hit your daily step goal'
+        }
+        deficits.push({ type: 'steps', pct, suggestion })
     }
 
     // 2. Water deficit
     if (waterMl < waterGoal) {
         const pct = (waterMl / waterGoal) * 100
-        deficits.push({
-            type: 'water',
-            pct,
-            suggestion: 'drink a glass of water to keep your hydration on track',
-        })
+        const suggestion = waterMl === 0
+            ? 'start with a fresh glass of water to kickstart hydration'
+            : hasAsthmaOrRespiratory
+                ? 'keep drinking water regularly to maintain clear airways and hydration'
+                : 'drink a glass of water to keep your hydration on track'
+        deficits.push({ type: 'water', pct, suggestion })
     }
 
     // 3. Sleep deficit
     if (sleepHours < sleepGoal) {
         const pct = (sleepHours / sleepGoal) * 100
-        deficits.push({
-            type: 'sleep',
-            pct,
-            suggestion: sleepHours === 0
-                ? 'prioritize a restful routine and earlier bedtime tonight'
-                : 'wind down with an earlier bedtime routine tonight for recovery',
-        })
+        const suggestion = sleepHours === 0
+            ? 'prioritize a restful routine and earlier bedtime tonight'
+            : 'wind down with an earlier bedtime routine tonight for recovery'
+        deficits.push({ type: 'sleep', pct, suggestion })
     }
 
     // 4. Active minutes deficit
     if (activeMins < activeGoal) {
         const pct = (activeMins / activeGoal) * 100
-        deficits.push({
-            type: 'active',
-            pct,
-            suggestion: 'fit in a 10-minute stretch or workout to stay active',
-        })
+        let suggestion
+        if (hasJointIssues) {
+            suggestion = 'fit in 10 minutes of low-impact stretching or joint mobility'
+        } else if (hasCardioOrHypertension) {
+            suggestion = 'enjoy 10 minutes of steady, moderate-paced movement without sudden strain'
+        } else if (isSedentary) {
+            suggestion = 'try 5–10 minutes of light mobility or stretching to stay active'
+        } else {
+            suggestion = 'fit in a 10-minute stretch or workout to stay active'
+        }
+        deficits.push({ type: 'active', pct, suggestion })
     }
 
     // If all goals achieved
@@ -125,28 +162,8 @@ function getCombinedRecommendation(healthData) {
 
     // Combine top 2 contextual suggestions together
     const [first, second] = deficits
-
-    let combined = ''
-    if (first.type === 'steps' && second.type === 'water') {
-        combined = 'Take a short walk to boost your step count, and drink a glass of water to keep your hydration on track.'
-    } else if (first.type === 'water' && second.type === 'steps') {
-        combined = 'Drink a glass of water to replenish your hydration, and take a short walk to keep moving toward your step goal.'
-    } else if (first.type === 'steps' && second.type === 'sleep') {
-        combined = 'A short walk will help energize your day, and an earlier bedtime tonight will support your recovery.'
-    } else if (first.type === 'sleep' && second.type === 'steps') {
-        combined = 'Plan an earlier bedtime tonight for recovery, and try a short walk to stay gently active.'
-    } else if (first.type === 'water' && second.type === 'sleep') {
-        combined = 'Remember to drink a glass of water to stay hydrated, and wind down with an earlier bedtime routine tonight.'
-    } else if (first.type === 'sleep' && second.type === 'water') {
-        combined = 'Set a restful bedtime routine for earlier sleep tonight, and drink a glass of water to keep your hydration up.'
-    } else if (first.type === 'steps' && second.type === 'active') {
-        combined = 'A brisk 15-minute walk will help you progress on both your steps and active minutes targets.'
-    } else if (first.type === 'active' && second.type === 'water') {
-        combined = 'Fit in a quick 10-minute movement session, and keep a water bottle nearby to stay well-hydrated.'
-    } else {
-        const firstCap = first.suggestion.charAt(0).toUpperCase() + first.suggestion.slice(1)
-        combined = `${firstCap}, and ${second.suggestion}.`
-    }
+    const firstCap = first.suggestion.charAt(0).toUpperCase() + first.suggestion.slice(1)
+    const combined = `${firstCap}, and ${second.suggestion}.`
 
     return {
         title: "Today's Recommendation",
@@ -154,8 +171,75 @@ function getCombinedRecommendation(healthData) {
     }
 }
 
+/* Selects a personalized, rule-based wellness tip based on user profile and daily metrics */
+function getPersonalizedWellnessTip(healthData, healthProfile = null, medicalConditions = []) {
+    const { waterMl = 0, sleepHours = 0, activeMins = 0, goals = {} } = healthData
+    const waterGoal = goals.waterMl || 2500
+    const sleepGoal = goals.sleepHours || 8
+    const activeGoal = goals.activeMinutes || 30
+    const sittingHours = Number(healthProfile?.sitting_hours) || 0
+
+    const conditionNames = (medicalConditions || []).map((c) => (c.condition_name || '').toLowerCase())
+    const hasJointIssues = conditionNames.some((c) =>
+        c.includes('joint') || c.includes('back') || c.includes('knee') || c.includes('injury') || c.includes('arthritis')
+    )
+
+    // Priority 1: High sitting hours (>= 7 hours)
+    if (sittingHours >= 7) {
+        return {
+            title: 'Stand up and reset every hour.',
+            body: 'With long periods of sitting, standing up for 1–2 minutes every hour boosts blood circulation and reduces lower back stiffness.',
+        }
+    }
+
+    // Priority 2: Joint sensitivity consideration
+    if (hasJointIssues) {
+        return {
+            title: 'Low-impact motion protects your joints.',
+            body: 'Smooth, non-jarring movements like gentle walking and light stretching lubricate cartilage without putting excess stress on joints.',
+        }
+    }
+
+    // Priority 3: Low water intake (< 50% of personal goal)
+    if (waterMl < waterGoal * 0.5) {
+        return {
+            title: "Keep hydration within arm's reach.",
+            body: 'Keeping a water bottle near your desk makes it effortless to take small sips throughout the day, preventing afternoon energy dips.',
+        }
+    }
+
+    // Priority 4: Sleep deficit (below goal by 0.5h or more)
+    if (sleepHours > 0 && sleepHours < sleepGoal - 0.5) {
+        return {
+            title: 'Support recovery with consistent sleep.',
+            body: 'A calm, screen-free 20-minute wind-down routine signals to your body that it is time for deep, restorative cellular recovery.',
+        }
+    }
+
+    // Priority 5: Low activity / movement (< 40% of active goal)
+    if (activeMins < activeGoal * 0.4) {
+        return {
+            title: 'Micro-movements add up quickly.',
+            body: 'Even 5 to 10 minutes of gentle walking or shoulder stretches between tasks helps elevate mental focus and daily vitality.',
+        }
+    }
+
+    // Fallback default tip
+    return {
+        title: 'Take small breaks throughout your day.',
+        body: 'A little movement between long periods of sitting can help you feel refreshed. Find a routine that works for you.',
+    }
+}
+
 function Home() {
     const navigate = useNavigate()
+    const { user, loading: authLoading } = useAuth()
+
+    const [loading, setLoading] = useState(true)
+    const [userName, setUserName] = useState('')
+    const [healthProfile, setHealthProfile] = useState(null)
+    const [medicalConditions, setMedicalConditions] = useState([])
+    const [error, setError] = useState(null)
 
     const [healthData, setHealthData] = useState(() => {
         const goals = getGoals()
@@ -169,15 +253,195 @@ function Home() {
     })
 
     useEffect(() => {
-        const goals = getGoals()
-        const steps = todaySteps().steps
-        const waterMl = todayWaterTotal()
-        const sleepHours = todaySleep()?.durationHours ?? 0
-        const activeMins = todayActiveMinutes()
-        const overall = overallProgress()
-        const weekly = getWeeklyHistory()
-        setHealthData({ goals, steps, waterMl, sleepHours, activeMins, overall, weekly })
-    }, [])
+        let isMounted = true
+
+        const computeLocalHealthData = (goalsOverride = null) => {
+            const goals = goalsOverride || getGoals()
+            const steps = todaySteps().steps
+            const waterMl = todayWaterTotal()
+            const sleepHours = todaySleep()?.durationHours ?? 0
+            const activeMins = todayActiveMinutes()
+            const weekly = getWeeklyHistory()
+            const pctCalc = (val, goal) => Math.min(100, goal > 0 ? Math.round((val / goal) * 100) : 0)
+            const overall = Math.round(
+                (pctCalc(steps, goals.steps) +
+                 pctCalc(waterMl, goals.waterMl) +
+                 pctCalc(sleepHours, goals.sleepHours) +
+                 pctCalc(activeMins, goals.activeMinutes)) / 4
+            )
+            return { goals, steps, waterMl, sleepHours, activeMins, overall, weekly }
+        }
+
+        async function loadDashboardData() {
+            try {
+                const baseGoals = getGoals()
+
+                // If user is not yet logged in or auth is checking, keep local state and stop loading
+                if (!user?.id) {
+                    if (isMounted) {
+                        setHealthData(computeLocalHealthData(baseGoals))
+                        if (!authLoading) {
+                            setLoading(false)
+                        }
+                    }
+                    return
+                }
+
+                // 1. Fetch user's full_name from profiles table (with fallback to user_metadata)
+                let name = user.user_metadata?.full_name || ''
+                try {
+                    const { data: profile, error: profileErr } = await supabase
+                        .from('profiles')
+                        .select('full_name')
+                        .eq('id', user.id)
+                        .maybeSingle()
+
+                    if (!profileErr && profile?.full_name) {
+                        name = profile.full_name
+                    } else if (profileErr && (profileErr.code === '42703' || profileErr.message?.includes('column "id" does not exist'))) {
+                        const { data: profileByUserId, error: errUserId } = await supabase
+                            .from('profiles')
+                            .select('full_name')
+                            .eq('user_id', user.id)
+                            .maybeSingle()
+                        if (!errUserId && profileByUserId?.full_name) {
+                            name = profileByUserId.full_name
+                        }
+                    }
+                } catch (err) {
+                    console.warn('Could not fetch from profiles table, using auth metadata:', err)
+                }
+
+                // 2. Fetch health information from health_profiles
+                let hp = null
+                try {
+                    const { data: hpData, error: hpErr } = await supabase
+                        .from('health_profiles')
+                        .select('*')
+                        .eq('user_id', user.id)
+                        .maybeSingle()
+
+                    if (!hpErr && hpData) {
+                        hp = hpData
+                    }
+                } catch (err) {
+                    console.warn('Could not fetch from health_profiles table:', err)
+                }
+
+                // 3. Fetch medical conditions from medical_conditions table
+                let conditions = []
+                try {
+                    const { data: condData, error: condErr } = await supabase
+                        .from('medical_conditions')
+                        .select('condition_name, is_controlled, status')
+                        .eq('user_id', user.id)
+
+                    if (!condErr && Array.isArray(condData)) {
+                        conditions = condData
+                    }
+                } catch (err) {
+                    console.warn('Could not fetch from medical_conditions table:', err)
+                }
+
+                // 4. Only seed daily targets from health_profiles if user does not already have
+                //    persisted/custom goals in `health_goals` (prevents overwriting custom targets)
+                const latestGoals = getGoals()
+                let effectiveGoals = latestGoals
+                if (!hasPersistedGoals() && hp) {
+                    let targetWaterMl = latestGoals.waterMl || 2500
+                    if (hp?.water_litres != null) {
+                        const parsedWater = parseFloat(hp.water_litres)
+                        if (!isNaN(parsedWater) && parsedWater > 0 && parsedWater <= 10) {
+                            targetWaterMl = Math.round(parsedWater * 1000)
+                        }
+                    }
+
+                    let targetSleepHours = latestGoals.sleepHours || 8
+                    if (hp?.sleep_hours != null) {
+                        const parsedSleep = parseFloat(hp.sleep_hours)
+                        if (!isNaN(parsedSleep) && parsedSleep >= 4 && parsedSleep <= 14) {
+                            targetSleepHours = Math.round(parsedSleep * 10) / 10
+                        }
+                    }
+
+                    let targetSteps = latestGoals.steps || 8000
+                    let targetActiveMinutes = latestGoals.activeMinutes || 30
+                    if (hp?.activity_level) {
+                        switch (hp.activity_level) {
+                            case 'Sedentary':
+                                targetSteps = 6000
+                                targetActiveMinutes = 20
+                                break
+                            case 'Lightly Active':
+                                targetSteps = 8000
+                                targetActiveMinutes = 30
+                                break
+                            case 'Moderately Active':
+                                targetSteps = 10000
+                                targetActiveMinutes = 45
+                                break
+                            case 'Very Active':
+                                targetSteps = 12000
+                                targetActiveMinutes = 60
+                                break
+                            default:
+                                targetSteps = latestGoals.steps || 8000
+                                targetActiveMinutes = latestGoals.activeMinutes || 30
+                        }
+                    }
+
+                    const mergedGoals = {
+                        steps: targetSteps,
+                        waterMl: targetWaterMl,
+                        sleepHours: targetSleepHours,
+                        activeMinutes: targetActiveMinutes,
+                    }
+
+                    effectiveGoals = mergedGoals
+                    if (
+                        mergedGoals.steps !== latestGoals.steps ||
+                        mergedGoals.waterMl !== latestGoals.waterMl ||
+                        mergedGoals.sleepHours !== latestGoals.sleepHours ||
+                        mergedGoals.activeMinutes !== latestGoals.activeMinutes
+                    ) {
+                        saveGoals(mergedGoals, { markCustom: false })
+                    }
+                }
+
+                if (isMounted) {
+                    setUserName(name)
+                    setHealthProfile(hp)
+                    setMedicalConditions(conditions)
+                    setHealthData(computeLocalHealthData(effectiveGoals))
+                }
+            } catch (err) {
+                console.error('Failed to load user dashboard data:', err)
+                if (isMounted) {
+                    setError('Unable to load some profile details. Showing local data.')
+                }
+            } finally {
+                if (isMounted) {
+                    setLoading(false)
+                }
+            }
+        }
+
+        loadDashboardData()
+
+        // On background sync completion, refresh only tracking metrics from hydrated local cache
+        // (avoids redundant profile re-fetches or feedback loops)
+        const handleSync = () => {
+            if (isMounted) {
+                setHealthData(computeLocalHealthData())
+            }
+        }
+        window.addEventListener('fitkey-sync-complete', handleSync)
+
+        return () => {
+            isMounted = false
+            window.removeEventListener('fitkey-sync-complete', handleSync)
+        }
+    }, [user?.id, user?.user_metadata?.full_name, authLoading])
 
     const pct = (val, goal) => Math.min(100, goal > 0 ? Math.round((val / goal) * 100) : 0)
 
@@ -265,8 +529,20 @@ function Home() {
     const focus = metrics.reduce((lowest, m) => (m.progress < lowest.progress ? m : lowest), metrics[0])
     const FocusIcon = focus.icon
 
-    // 1–2 contextual suggestions combined based on health data
-    const recommendation = getCombinedRecommendation(healthData)
+    // 1–2 contextual suggestions combined based on health data, health profile, and conditions
+    const recommendation = getCombinedRecommendation(healthData, healthProfile, medicalConditions)
+
+    // Personalized rule-based wellness tip
+    const wellnessTip = getPersonalizedWellnessTip(healthData, healthProfile, medicalConditions)
+
+    // Real streak from actual recorded activity history
+    const currentStreak = getCurrentStreak()
+
+    // Real challenge progress evaluated in read-only mode (no render side effects)
+    const challengeSummary = evaluateDailyChallenges({ evaluateOnly: true }).summary
+    const doneMissions = challengeSummary?.doneCount ?? 0
+    const totalMissions = challengeSummary?.totalCount || 4
+    const missionsPct = totalMissions > 0 ? Math.min(100, Math.round((doneMissions / totalMissions) * 100)) : 0
 
     const weeklyActivity = healthData.weekly.map((d) => ({
         day: d.day,
@@ -283,8 +559,38 @@ function Home() {
         ? Math.round(activeDays.reduce((sum, d) => sum + d.value, 0) / activeDays.length)
         : 0
 
+    const getGreeting = () => {
+        const hour = new Date().getHours()
+        if (hour < 12) return 'Good morning'
+        if (hour < 18) return 'Good afternoon'
+        return 'Good evening'
+    }
+
+    const firstName = userName ? userName.trim().split(' ')[0] : ''
+    const greetingText = firstName ? `${getGreeting()}, ${firstName}!` : `${getGreeting()}!`
+
+    if (loading) {
+        return (
+            <div className="flex min-h-[50vh] items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#033135] border-t-transparent" />
+            </div>
+        )
+    }
+
     return (
         <div className="space-y-5 sm:space-y-7">
+
+            {error && (
+                <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
+                    <span>{error}</span>
+                    <button
+                        onClick={() => setError(null)}
+                        className="ml-3 font-semibold text-red-800 hover:underline"
+                    >
+                        Dismiss
+                    </button>
+                </div>
+            )}
 
             {/* Welcome */}
             <section className="flex items-start justify-between gap-3">
@@ -297,7 +603,7 @@ function Home() {
                         className="mt-1 text-2xl sm:text-3xl md:text-4xl text-[#033135] truncate"
                         style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
                     >
-                        Good morning!
+                        {greetingText}
                     </h1>
 
                     <p className="mt-1.5 text-xs sm:text-sm text-[#647572]">
@@ -347,7 +653,9 @@ function Home() {
                         </div>
 
                         <div>
-                            <p className="text-xl sm:text-2xl font-bold">5 Days</p>
+                            <p className="text-xl sm:text-2xl font-bold">
+                                {currentStreak} {currentStreak === 1 ? 'Day' : 'Days'}
+                            </p>
                             <p className="text-[10px] sm:text-xs text-[#C4D7D4]">
                                 Current streak
                             </p>
@@ -598,10 +906,13 @@ function Home() {
 
                         <div className="mt-2 flex items-center gap-2">
                             <div className="h-1.5 w-24 overflow-hidden rounded-full bg-white/70 sm:w-32">
-                                <div className="h-full w-1/3 rounded-full bg-[#8B6D25]" />
+                                <div
+                                    className="h-full rounded-full bg-[#8B6D25] transition-all duration-500"
+                                    style={{ width: `${missionsPct}%` }}
+                                />
                             </div>
                             <span className="text-[10px] font-semibold text-[#8B6D25] sm:text-xs">
-                                1 of 3 missions done
+                                {doneMissions} of {totalMissions} missions done
                             </span>
                         </div>
                     </div>
@@ -673,12 +984,11 @@ function Home() {
                     </p>
 
                     <h3 className="mt-1 text-sm font-bold text-[#033135]">
-                        Take small breaks throughout your day.
+                        {wellnessTip.title}
                     </h3>
 
                     <p className="mt-1 text-xs sm:text-sm leading-5 text-[#647572]">
-                        A little movement between long periods of sitting can help
-                        you feel refreshed. Find a routine that works for you.
+                        {wellnessTip.body}
                     </p>
                 </div>
             </section>

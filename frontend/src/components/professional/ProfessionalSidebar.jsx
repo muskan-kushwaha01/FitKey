@@ -31,8 +31,8 @@ export default function ProfessionalSidebar({
         { name: 'Payment Settings', path: '/professional/consultations/payments', icon: CreditCard },
     ]
 
-    const handleLogout = () => {
-        logoutProfessional()
+    const handleLogout = async () => {
+        await logoutProfessional()
         toast.success('Logged out from Professional Portal.')
         navigate('/welcome')
     }

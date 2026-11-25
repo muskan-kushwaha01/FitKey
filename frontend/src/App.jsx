@@ -14,6 +14,7 @@ import MainLayout from './layouts/MainLayout'
 import Home from './pages/home/Home'
 import Health from './pages/health/Health'
 import Rewards from './pages/rewards/Rewards'
+import RewardsHistory from './pages/rewards/RewardsHistory'
 import Community from './pages/community/Community'
 import ConsultationsDiscovery from './pages/consultations/ConsultationsDiscovery'
 import UserConsultationHistory from './pages/consultations/UserConsultationHistory'
@@ -41,65 +42,82 @@ import ConsultationAppointments from './pages/professional/consultations/Consult
 import ConsultationHistory from './pages/professional/consultations/ConsultationHistory'
 import ConsultationEarnings from './pages/professional/consultations/ConsultationEarnings'
 import PaymentSettings from './pages/professional/consultations/PaymentSettings'
+import { AuthProvider } from './context/AuthContext'
+import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
   return (
-    <Routes>
-      {/* Onboarding */}
-      <Route path="/" element={<Splash />} />
-      <Route path="/welcome" element={<Welcome />} />
+    <AuthProvider>
+      <Routes>
+        {/* Onboarding */}
+        <Route path="/" element={<Splash />} />
+        <Route path="/welcome" element={<Welcome />} />
 
-      {/* Authentication */}
-      <Route path="/login" element={<Auth initialMode="login" />} />
-      <Route path="/signup" element={<Auth initialMode="signup" />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
+        {/* Authentication */}
+        <Route path="/login" element={<Auth initialMode="login" />} />
+        <Route path="/signup" element={<Auth initialMode="signup" />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
 
-      {/* Professional Public Flow */}
-      <Route path="/professional/login" element={<ProfessionalLogin />} />
-      <Route path="/professional/register" element={<ProfessionalRegister />} />
-      <Route path="/professional/onboarding" element={<ProfessionalOnboarding />} />
-      <Route path="/professional/public/:id" element={<PublicProfessionalProfile />} />
+        {/* Professional Public Flow */}
+        <Route path="/professional/login" element={<ProfessionalLogin />} />
+        <Route path="/professional/register" element={<ProfessionalRegister />} />
+        <Route path="/professional/onboarding" element={<ProfessionalOnboarding />} />
+        <Route path="/professional/public/:id" element={<PublicProfessionalProfile />} />
 
-      {/* Professional App (Protected with Persistent Navigation) */}
-      <Route element={<ProfessionalLayout />}>
-        <Route path="/professional/home" element={<ProfessionalHome />} />
-        <Route path="/professional/leaderboard" element={<ProfessionalLeaderboard />} />
-        <Route path="/professional/xp" element={<ProfessionalXP />} />
-        <Route path="/professional/rewards" element={<ProfessionalRewards />} />
-        <Route path="/professional/profile" element={<ProfessionalProfile />} />
-        <Route path="/professional/content/create" element={<CreateContent />} />
-        <Route path="/professional/content/edit/:id" element={<EditContent />} />
-        {/* Professional Consultations */}
-        <Route path="/professional/consultations" element={<ConsultationOverview />} />
-        <Route path="/professional/consultations/schedule" element={<ConsultationSchedule />} />
-        <Route path="/professional/consultations/appointments" element={<ConsultationAppointments />} />
-        <Route path="/professional/consultations/history" element={<ConsultationHistory />} />
-        <Route path="/professional/consultations/earnings" element={<ConsultationEarnings />} />
-        <Route path="/professional/consultations/payments" element={<PaymentSettings />} />
-      </Route>
+        {/* Professional App (Protected with Persistent Navigation) */}
+        <Route
+          element={
+            <ProtectedRoute redirectTo="/professional/login" type="professional">
+              <ProfessionalLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route path="/professional/home" element={<ProfessionalHome />} />
+          <Route path="/professional/leaderboard" element={<ProfessionalLeaderboard />} />
+          <Route path="/professional/xp" element={<ProfessionalXP />} />
+          <Route path="/professional/rewards" element={<ProfessionalRewards />} />
+          <Route path="/professional/profile" element={<ProfessionalProfile />} />
+          <Route path="/professional/content/create" element={<CreateContent />} />
+          <Route path="/professional/content/edit/:id" element={<EditContent />} />
+          {/* Professional Consultations */}
+          <Route path="/professional/consultations" element={<ConsultationOverview />} />
+          <Route path="/professional/consultations/schedule" element={<ConsultationSchedule />} />
+          <Route path="/professional/consultations/appointments" element={<ConsultationAppointments />} />
+          <Route path="/professional/consultations/history" element={<ConsultationHistory />} />
+          <Route path="/professional/consultations/earnings" element={<ConsultationEarnings />} />
+          <Route path="/professional/consultations/payments" element={<PaymentSettings />} />
+        </Route>
 
-      {/* Health Profile Setup Flow */}
-      <Route path="/journey-selection" element={<JourneySelection />} />
-      <Route path="/wellness-setup" element={<WellnessSetup />} />
-      <Route path="/health-history" element={<HealthHistory />} />
-      <Route path="/all-done" element={<AllDone />} />
+        {/* Health Profile Setup Flow */}
+        <Route path="/journey-selection" element={<JourneySelection />} />
+        <Route path="/wellness-setup" element={<WellnessSetup />} />
+        <Route path="/health-history" element={<HealthHistory />} />
+        <Route path="/all-done" element={<AllDone />} />
 
-      {/* Main Application */}
-      <Route element={<MainLayout />}>
-        <Route path="/home" element={<Home />} />
-        <Route path="/health" element={<Health />} />
-        <Route path="/rewards" element={<Rewards />} />
-        <Route path="/community" element={<Community />} />
-        <Route path="/consultations" element={<ConsultationsDiscovery />} />
-        <Route path="/consultation-history" element={<UserConsultationHistory />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/partnerships" element={<Partnerships />} />
-        <Route path="/settings" element={<Settings />} />
-      </Route>
+        {/* Main Application */}
+        <Route
+          element={
+            <ProtectedRoute redirectTo="/login">
+              <MainLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route path="/home" element={<Home />} />
+          <Route path="/health" element={<Health />} />
+          <Route path="/rewards" element={<Rewards />} />
+          <Route path="/rewards/history" element={<RewardsHistory />} />
+          <Route path="/community" element={<Community />} />
+          <Route path="/consultations" element={<ConsultationsDiscovery />} />
+          <Route path="/consultation-history" element={<UserConsultationHistory />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/partnerships" element={<Partnerships />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
 
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AuthProvider>
   )
 }
 

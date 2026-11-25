@@ -1,5 +1,5 @@
 // services/challengeService.js
-// Challenge progress evaluation, completion checks, and XP award triggers.
+// Challenge progress evaluation and server-verified completion checks.
 
 import { CHALLENGE_TEMPLATES, DAILY_BONUS_XP } from '../data/challenges'
 import {
@@ -10,13 +10,14 @@ import {
   todayActiveMinutes,
 } from './healthService'
 import { awardXP, hasAwarded, getXPTransactions } from './xpService'
-import { getTodayDateString } from './storageService'
+import { getTodayDateString, getStorageUserId } from './storageService'
+import { syncProgressWithServer } from './syncService'
 
 /**
- * Evaluate today's daily challenges against actual health metrics.
- * Automatically checks and awards XP for completed challenges and daily bonus.
+ * Evaluate today's daily challenges against tracked metrics.
+ * Pass `{ evaluateOnly: true }` when calling during React render so no side-effect writes occur.
  */
-export function evaluateDailyChallenges() {
+export function evaluateDailyChallenges({ evaluateOnly = false } = {}) {
   const today = getTodayDateString()
   const goals = getGoals()
 
@@ -38,10 +39,9 @@ export function evaluateDailyChallenges() {
     const completed = progress >= 100
     const refId = `challenge-${tmpl.id}-${today}`
 
-    // Award XP if completed and not already awarded
     if (completed) {
       doneCount++
-      if (!hasAwarded(refId)) {
+      if (!evaluateOnly && !hasAwarded(refId)) {
         awardXP({
           amount: tmpl.reward,
           source: 'CHALLENGE',
@@ -51,8 +51,8 @@ export function evaluateDailyChallenges() {
       }
     }
 
-    const isAwarded = hasAwarded(refId)
-    if (isAwarded) {
+    const isAwarded = hasAwarded(refId) || (!evaluateOnly && completed)
+    if (isAwarded || completed) {
       xpEarnedToday += tmpl.reward
     }
     xpAvailableToday += tmpl.reward
@@ -68,16 +68,15 @@ export function evaluateDailyChallenges() {
       color: tmpl.color,
       iconColor: tmpl.iconColor,
       completed,
-      isAwarded,
+      isAwarded: hasAwarded(refId),
     }
   })
 
-  // Check Daily Bonus: all challenges completed
   const bonusRefId = `bonus-all-daily-${today}`
   const allDone = doneCount === CHALLENGE_TEMPLATES.length
   let bonusClaimed = hasAwarded(bonusRefId)
 
-  if (allDone && !bonusClaimed) {
+  if (allDone && !bonusClaimed && !evaluateOnly) {
     awardXP({
       amount: DAILY_BONUS_XP,
       source: 'BONUS',
@@ -85,6 +84,8 @@ export function evaluateDailyChallenges() {
       description: 'Completed all daily missions bonus',
     })
     bonusClaimed = true
+    xpEarnedToday += DAILY_BONUS_XP
+  } else if (allDone && bonusClaimed) {
     xpEarnedToday += DAILY_BONUS_XP
   }
 
@@ -103,10 +104,17 @@ export function evaluateDailyChallenges() {
 }
 
 /**
+ * Trigger server-side verification & persistence of today's challenges and XP.
+ */
+export async function syncChallengesWithServer(userId = getStorageUserId()) {
+  if (!userId) return { success: false, reason: 'NO_USER' }
+  return syncProgressWithServer(userId, [getTodayDateString()])
+}
+
+/**
  * Get total number of challenge missions completed across all time.
  */
 export function getTotalCompletedMissionsCount() {
   const transactions = getXPTransactions()
   return transactions.filter((t) => t.source === 'CHALLENGE' && t.type === 'EARN').length
 }
-

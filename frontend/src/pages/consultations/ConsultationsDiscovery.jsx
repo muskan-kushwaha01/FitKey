@@ -2,22 +2,17 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
     Search,
-    Filter,
     BadgeCheck,
     Star,
     MapPin,
     Briefcase,
-    Calendar,
     Clock,
     Phone,
-    Shield,
     Sparkles,
     CheckCircle2,
     ChevronRight,
     X,
-    ArrowRight,
     Stethoscope,
-    HeartPulse,
     SlidersHorizontal,
 } from 'lucide-react'
 import {
@@ -26,11 +21,15 @@ import {
     filterProfessionals,
 } from '../../services/user/userConsultationService.js'
 import AppointmentBookingModal from '../../components/consultations/AppointmentBookingModal.jsx'
+import { useAuth } from '../../context/AuthContext.jsx'
+import { fetchUserProfile } from '../../services/userProfileService.js'
+import toast from 'react-hot-toast'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 export default function ConsultationsDiscovery() {
     const navigate = useNavigate()
+    const { user } = useAuth()
 
     const [allProfessionals, setAllProfessionals] = useState([])
     const [recommended, setRecommended] = useState([])
@@ -45,27 +44,39 @@ export default function ConsultationsDiscovery() {
     const [selectedSpecialization, setSelectedSpecialization] = useState('all')
     const [showFiltersModal, setShowFiltersModal] = useState(false)
     const [bookingProf, setBookingProf] = useState(null)
-
-    // User wellness profile context (simulated / read from storage)
-    const userProfile = useMemo(() => ({
-        name: 'Alex Morgan',
-        goal: 'Cardiovascular Stamina & Metabolic Health',
-        city: 'Gurugram',
-    }), [])
+    const [userProfile, setUserProfile] = useState({})
 
     useEffect(() => {
-        setLoading(true)
-        try {
-            const list = getConsultationProfessionals()
-            const recs = getRecommendedProfessionals(userProfile)
-            setAllProfessionals(list)
-            setRecommended(recs)
-        } catch (err) {
-            console.error('[ConsultationsDiscovery] Load error:', err)
-        } finally {
-            setLoading(false)
+        let cancelled = false
+        const load = async () => {
+            setLoading(true)
+            try {
+                const [list, profileResult] = await Promise.all([
+                    getConsultationProfessionals(),
+                    user ? fetchUserProfile(user) : Promise.resolve({ success: false }),
+                ])
+                if (cancelled) return
+                const profile = profileResult?.success ? {
+                    goal: profileResult.data?.wellness?.primaryGoal || '',
+                    city: profileResult.data?.personal?.city || '',
+                } : {}
+                setUserProfile(profile)
+                setAllProfessionals(list)
+                setRecommended(getRecommendedProfessionals(profile, list))
+            } catch (err) {
+                if (!cancelled) {
+                    console.error('[ConsultationsDiscovery] Load error:', err)
+                    toast.error(err?.message || 'Could not load practitioners.')
+                    setAllProfessionals([])
+                    setRecommended([])
+                }
+            } finally {
+                if (!cancelled) setLoading(false)
+            }
         }
-    }, [userProfile])
+        load()
+        return () => { cancelled = true }
+    }, [user])
 
     // Filtered practitioners
     const filteredList = useMemo(() => {
@@ -252,7 +263,7 @@ export default function ConsultationsDiscovery() {
                                         Recommended for Your Wellness Focus
                                     </h2>
                                     <p className="text-[11px] text-[#647572]">
-                                        Matched to your goal ({userProfile.goal}) &amp; location ({userProfile.city}). Prioritizing certified credentials.
+                                        {userProfile.goal ? `Matched to your wellness focus (${userProfile.goal}).` : 'Recommendations from verified practitioners available for booking.'}
                                     </p>
                                 </div>
                             </div>
@@ -403,20 +414,20 @@ export default function ConsultationsDiscovery() {
                                             <div className="flex items-center gap-3 pt-1">
                                                 <div className="flex items-center gap-1 text-[#033135] font-bold">
                                                     <Star size={13} className="text-[#E0AE3A] fill-current" />
-                                                    <span>{prof.ratingSummary?.avg?.toFixed(1) || '4.8'}</span>
+                                                    <span>{Number(prof.ratingSummary?.avg || 0).toFixed(1)}</span>
                                                     <span className="text-[11px] text-[#9AA6A0] font-normal">
-                                                        ({prof.ratingSummary?.total || 12} reviews)
+                                                        ({prof.ratingSummary?.total || 0} reviews)
                                                     </span>
                                                 </div>
 
                                                 {hasSlots ? (
                                                     <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2F7B58]">
                                                         <span className="h-1.5 w-1.5 rounded-full bg-[#2F7B58]" />
-                                                        Slots Available Today
+                                                        Slots available today
                                                     </span>
                                                 ) : (
                                                     <span className="text-[11px] text-[#9AA6A0]">
-                                                        Weekly Schedule Open
+                                                        View dates to find available slots
                                                     </span>
                                                 )}
                                             </div>
@@ -440,7 +451,7 @@ export default function ConsultationsDiscovery() {
                                             style={{ color: '#ffffff' }}
                                         >
                                             <Phone size={12} />
-                                            <span>Consult</span>
+                                            <span>View slots</span>
                                         </button>
                                     </div>
                                 </div>
@@ -578,8 +589,10 @@ export default function ConsultationsDiscovery() {
                 isOpen={Boolean(bookingProf)}
                 onClose={() => setBookingProf(null)}
                 onBookingSuccess={() => {
-                    const list = getConsultationProfessionals()
-                    setAllProfessionals(list)
+                    getConsultationProfessionals().then((list) => {
+                        setAllProfessionals(list)
+                        setRecommended(getRecommendedProfessionals(userProfile, list))
+                    }).catch((err) => toast.error(err?.message || 'Could not refresh practitioners.'))
                 }}
             />
         </div>

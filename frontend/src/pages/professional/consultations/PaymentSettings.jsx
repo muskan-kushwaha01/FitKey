@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import {
-    CreditCard,
     Building2,
     ShieldCheck,
     Lock,
@@ -9,8 +8,8 @@ import {
     ArrowLeft,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getCurrentProfessional } from '../../../services/professional/professionalAuthService.js'
 import {
+    fetchPayoutSettings,
     getPayoutSettings,
     savePayoutSettings,
 } from '../../../services/professional/professionalConsultationService.js'
@@ -18,27 +17,27 @@ import {
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 export default function PaymentSettings() {
-    const { professional: contextProf } = useOutletContext() || {}
-    const [professional, setProfessional] = useState(contextProf || null)
+    const { professional } = useOutletContext() || {}
     const [payoutForm, setPayoutForm] = useState(null)
     const [saving, setSaving] = useState(false)
 
     useEffect(() => {
-        const prof = contextProf || getCurrentProfessional()
-        if (prof?.id) {
-            setProfessional(prof)
-            const settings = getPayoutSettings(prof.id)
-            setPayoutForm({
-                preferredPayoutMethod: settings.preferredPayoutMethod || 'upi',
-                payoutUpiId: settings.payoutUpiId || '',
-                accountHolderName: settings.accountHolderName || '',
-                bankName: settings.bankName || '',
-                accountNumber: '',
-                accountNumberMasked: settings.accountNumberMasked || '',
-                ifscCode: settings.ifscCode || '',
-            })
+        if (professional?.id) {
+            fetchPayoutSettings(professional.id).then((settings) => {
+                const saved = settings?.payoutSettings || {}
+                setPayoutForm({
+                    preferredPayoutMethod: saved.preferredPayoutMethod || 'upi',
+                    payoutUpiId: saved.payoutUpiId || '',
+                    accountHolderName: saved.accountHolderName || '',
+                    bankName: saved.bankName || '',
+                    accountNumber: '',
+                    accountNumberMasked: saved.accountNumberMasked || '',
+                    ifscCode: saved.ifscCode || '',
+                })
+                if (!settings?.success) toast.error(settings?.error || 'Could not load payout settings.')
+            }).catch((error) => toast.error(error?.message || 'Could not load payout settings.'))
         }
-    }, [contextProf])
+    }, [professional?.id])
 
     if (!payoutForm) {
         return (
@@ -48,7 +47,7 @@ export default function PaymentSettings() {
         )
     }
 
-    const handleSave = (e) => {
+    const handleSave = async (e) => {
         e.preventDefault()
         if (!professional?.id) return
 
@@ -77,7 +76,7 @@ export default function PaymentSettings() {
         }
 
         setSaving(true)
-        const res = savePayoutSettings(professional.id, payoutForm)
+        const res = await savePayoutSettings(professional.id, payoutForm)
         setSaving(false)
 
         if (res.success) {

@@ -1,7 +1,5 @@
-// data/rewards.js
-// Reward store items, descriptions, categories, and XP redemption costs.
-
-import { Ticket, Gift, Gem, Award, ShieldCheck } from 'lucide-react'
+// Illustrative reward catalog shown in the demo Reward Store.
+import { Ticket, Gift, Gem, Award } from 'lucide-react'
 
 export const REWARD_ITEMS = [
   {

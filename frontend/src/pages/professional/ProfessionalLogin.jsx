@@ -7,13 +7,12 @@ import {
     Mail,
     Lock,
     Stethoscope,
-    Sparkles,
     ArrowRight,
     ShieldCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { loginProfessional } from '../../services/professional/professionalAuthService.js'
-import { isOnboardingCompleted } from '../../services/professional/professionalProfileService.js'
+import { isOnboardingCompletedAsync } from '../../services/professional/professionalProfileService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -42,13 +41,7 @@ function ProfessionalLogin() {
     const [showPassword, setShowPassword] = useState(false)
     const [loading, setLoading] = useState(false)
 
-    const handleQuickFill = () => {
-        setEmail('dr.ananya@fitkey.com')
-        setPassword('password123')
-        toast('Demo credentials filled!', { icon: '✨' })
-    }
-
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault()
 
         if (!email.trim() || !password.trim()) {
@@ -57,22 +50,26 @@ function ProfessionalLogin() {
         }
 
         setLoading(true)
-        const result = loginProfessional({ email, password })
-        setLoading(false)
+        try {
+            const result = await loginProfessional({ email, password })
 
-        if (!result.success) {
-            toast.error(result.error)
-            return
-        }
+            if (!result.success) {
+                toast.error(result.error)
+                return
+            }
 
-        toast.success(result.message)
+            toast.success(result.message)
 
-        // Check whether professional onboarding was finished
-        const completed = isOnboardingCompleted(result.professional.id)
-        if (completed) {
-            navigate('/professional/home')
-        } else {
-            navigate('/professional/onboarding')
+            const completed = await isOnboardingCompletedAsync(result.professional?.id)
+            if (completed) {
+                navigate('/professional/home')
+            } else {
+                navigate('/professional/onboarding')
+            }
+        } catch (err) {
+            toast.error(err?.message || 'Unable to sign in.')
+        } finally {
+            setLoading(false)
         }
     }
 
@@ -110,21 +107,6 @@ function ProfessionalLogin() {
                     <p className="mt-2 text-sm text-[#647572]">
                         Welcome back. Access your verified professional profile and health practice.
                     </p>
-
-                    {/* Quick fill card for testing */}
-                    <div className="mt-5 flex items-center justify-between rounded-xl border border-[#E8EFEB] bg-[#F0F5F2] p-3 text-xs">
-                        <div className="flex items-center gap-2 text-[#324C4D]">
-                            <Sparkles size={14} className="text-[#8B6D25]" />
-                            <span>Quick testing: <strong>dr.ananya@fitkey.com</strong></span>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handleQuickFill}
-                            className="rounded-lg bg-white px-2.5 py-1 font-semibold text-[#033135] shadow-xs hover:bg-[#E4F0EA]"
-                        >
-                            Fill Demo
-                        </button>
-                    </div>
 
                     {/* Form */}
                     <form onSubmit={handleSubmit} className="mt-6 space-y-4">

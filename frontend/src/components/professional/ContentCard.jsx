@@ -9,7 +9,6 @@ import {
     MoreVertical,
     Edit2,
     Trash2,
-    Calendar,
     Play,
     Eye,
     X,
@@ -24,6 +23,7 @@ import {
     toggleLikePost,
     toggleSavePost,
     addComment,
+    getPostComments,
     getInteractionStatus,
 } from '../../services/professional/professionalContentService.js'
 
@@ -47,13 +47,35 @@ export function ContentCard({
     const [liked, setLiked] = useState(() => getInteractionStatus(post.id, currentUserId).liked)
     const [saved, setSaved] = useState(() => getInteractionStatus(post.id, currentUserId).saved)
     const [likesCount, setLikesCount] = useState(post.likesCount || 0)
-    const [savesCount, setSavesCount] = useState(post.savesCount || 0)
+    const [, setSavesCount] = useState(post.savesCount || 0)
     const [comments, setComments] = useState(post.comments || [])
+    const [commentsCount, setCommentsCount] = useState(post.commentsCount ?? post.comments?.length ?? 0)
+    const [commentsLoading, setCommentsLoading] = useState(false)
+    const [commentsError, setCommentsError] = useState('')
     const [newComment, setNewComment] = useState('')
     const [showDetailModal, setShowDetailModal] = useState(false)
     const [menuOpen, setMenuOpen] = useState(false)
 
     const isAuthor = !readOnly && currentUserId && post.authorId === currentUserId
+
+    const openDetailModal = async () => {
+        setShowDetailModal(true)
+        setCommentsLoading(true)
+        setCommentsError('')
+        try {
+            const rows = await getPostComments(post.id)
+            setComments(rows.map((comment) => ({
+                ...comment,
+                authorId: comment.userId,
+            })))
+            setCommentsCount(rows.length)
+        } catch (error) {
+            setCommentsError(error?.message || 'Could not load comments.')
+            console.error('[ContentCard] Could not fetch post comments:', error)
+        } finally {
+            setCommentsLoading(false)
+        }
+    }
 
     const formattedDate = new Date(post.createdAt).toLocaleDateString('en-US', {
         month: 'short',
@@ -61,12 +83,12 @@ export function ContentCard({
         year: 'numeric',
     })
 
-    const handleLike = (e) => {
+    const handleLike = async (e) => {
         e.stopPropagation()
-        const res = toggleLikePost(post.id, currentUserId)
+        const res = await toggleLikePost(post.id, currentUserId)
         if (res.success) {
             setLiked(res.liked)
-            setLikesCount(res.likesCount)
+            setLikesCount((prev) => (res.liked ? prev + 1 : Math.max(0, prev - 1)))
             if (onUpdate) onUpdate()
         }
     }
@@ -76,7 +98,7 @@ export function ContentCard({
         const res = toggleSavePost(post.id, currentUserId)
         if (res.success) {
             setSaved(res.saved)
-            setSavesCount(res.savesCount)
+            setSavesCount((prev) => (res.saved ? prev + 1 : Math.max(0, prev - 1)))
             toast.success(res.saved ? 'Saved to bookmarks' : 'Removed from bookmarks')
             if (onUpdate) onUpdate()
         }
@@ -98,19 +120,22 @@ export function ContentCard({
         navigate(`/professional/content/edit/${post.id}`)
     }
 
-    const handleAddComment = (e) => {
+    const handleAddComment = async (e) => {
         e.preventDefault()
         if (!newComment.trim()) return
-        const res = addComment(post.id, {
+        const res = await addComment(post.id, {
             authorId: currentUserId,
             authorName: currentUserName || 'Verified Professional',
             text: newComment,
         })
         if (res.success) {
             setComments((prev) => [...prev, res.comment])
+            setCommentsCount(typeof res.commentsCount === 'number' ? res.commentsCount : (count) => count + 1)
             setNewComment('')
             toast.success('Comment posted!')
             if (onUpdate) onUpdate()
+        } else {
+            toast.error(res.error || 'Could not post comment.')
         }
     }
 
@@ -152,7 +177,7 @@ export function ContentCard({
             {/* ── 1. PROFESSIONAL REEL CARD (YT Shorts & IG Reels Style) ── */}
             {post.type === 'reel' && (
                 <article
-                    onClick={() => setShowDetailModal(true)}
+                    onClick={openDetailModal}
                     className="group relative aspect-[9/16] w-full overflow-hidden rounded-3xl bg-black cursor-pointer shadow-md hover:shadow-xl transition-all duration-300 hover:scale-[1.01]"
                 >
                     {/* Media Cover / Video Background */}
@@ -235,7 +260,7 @@ export function ContentCard({
             {/* ── 2. PROFESSIONAL ARTICLE CARD (Editorial Medical Journal Style) ── */}
             {post.type === 'article' && (
                 <article
-                    onClick={() => setShowDetailModal(true)}
+                    onClick={openDetailModal}
                     className="group flex flex-col justify-between rounded-3xl border border-[#E8EFEB] bg-white p-5 sm:p-6 shadow-xs hover:border-[#648C83] hover:shadow-md transition-all cursor-pointer"
                 >
                     <div className="space-y-3.5">
@@ -302,7 +327,7 @@ export function ContentCard({
             {/* ── 3. PROFESSIONAL DISCUSSION CARD (Conversational Forum Style) ── */}
             {post.type === 'discussion' && (
                 <article
-                    onClick={() => setShowDetailModal(true)}
+                    onClick={openDetailModal}
                     className="group relative flex flex-col justify-between rounded-3xl border-l-4 border-l-[#033135] border border-[#E8EFEB] bg-gradient-to-br from-[#FAFBF9] via-[#F5F8F6] to-[#EBF3EF] p-5 sm:p-6 shadow-xs hover:shadow-md transition-all cursor-pointer"
                 >
                     <div className="space-y-3.5">
@@ -341,7 +366,7 @@ export function ContentCard({
                     <div className="mt-4 pt-3.5 border-t border-[#033135]/10 flex items-center justify-between text-xs">
                         <div className="flex items-center gap-1.5 text-xs font-bold text-[#033135] bg-white px-3 py-1.5 rounded-full border border-[#DCE7E3] shadow-2xs">
                             <MessageSquare size={13} className="text-[#648C83]" />
-                            <span>{comments.length} Clinical Replies</span>
+                            <span>{commentsCount} Clinical Replies</span>
                         </div>
 
                         <div className="flex items-center gap-3 text-[#647572] text-[11px]" onClick={(e) => e.stopPropagation()}>
@@ -478,11 +503,15 @@ export function ContentCard({
                             {/* Discussion Responses Section */}
                             <div className="pt-4 border-t border-[#E8EFEB] space-y-3">
                                 <h4 className="text-xs font-bold text-[#033135] uppercase tracking-wider">
-                                    Responses ({comments.length})
+                                    Responses ({commentsCount})
                                 </h4>
 
                                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                                    {comments.length === 0 ? (
+                                    {commentsLoading ? (
+                                        <p className="text-xs text-[#647572]">Loading comments…</p>
+                                    ) : commentsError ? (
+                                        <p className="text-xs text-red-600">{commentsError}</p>
+                                    ) : comments.length === 0 ? (
                                         <p className="text-xs text-[#9AA6A0]">No replies yet.</p>
                                     ) : (
                                         comments.map((c) => (

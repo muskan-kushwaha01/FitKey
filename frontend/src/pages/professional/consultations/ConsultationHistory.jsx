@@ -17,8 +17,8 @@ import {
     Pill,
     AlertTriangle,
 } from 'lucide-react'
-import { getCurrentProfessional } from '../../../services/professional/professionalAuthService.js'
-import { getAppointments } from '../../../services/professional/professionalConsultationService.js'
+import { fetchAppointments } from '../../../services/professional/professionalConsultationService.js'
+import toast from 'react-hot-toast'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
@@ -31,11 +31,16 @@ export default function ConsultationHistory() {
     const [selectedAptDetails, setSelectedAptDetails] = useState(null)
 
     useEffect(() => {
-        const prof = contextProf || getCurrentProfessional()
+        const prof = contextProf
         if (prof?.id) {
             setProfessional(prof)
-            const apts = getAppointments(prof.id)
-            setAllAppointments(apts)
+            fetchAppointments(prof.id).then((result) => {
+                setAllAppointments(Array.isArray(result?.appointments) ? result.appointments : [])
+                if (!result?.success) toast.error(result?.error || 'Could not load consultation history.')
+            }).catch((error) => {
+                setAllAppointments([])
+                toast.error(error?.message || 'Could not load consultation history.')
+            })
         }
     }, [contextProf])
 

@@ -4,13 +4,11 @@ import {
     Calendar,
     Clock,
     PhoneCall,
-    User,
     CheckCircle2,
     XCircle,
     ArrowLeft,
     Shield,
     FileText,
-    AlertCircle,
     Phone,
     X,
     Activity,
@@ -19,11 +17,10 @@ import {
     Eye,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getCurrentProfessional } from '../../../services/professional/professionalAuthService.js'
 import {
-    getAppointments,
+    fetchAppointments,
     updateAppointmentStatus,
-    getConsultationSettings,
+    fetchConsultationSettings,
 } from '../../../services/professional/professionalConsultationService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
@@ -50,13 +47,23 @@ export default function ConsultationAppointments() {
     const [cancellationNote, setCancellationNote] = useState('')
     const [callConfirmApt, setCallConfirmApt] = useState(null)
 
-    const loadData = () => {
-        const prof = contextProf || getCurrentProfessional()
+    const loadData = async () => {
+        const prof = contextProf
         if (prof?.id) {
             setProfessional(prof)
-            const upcoming = getAppointments(prof.id, { status: 'upcoming' })
-            setAppointments(upcoming)
-            setSettings(getConsultationSettings(prof.id))
+            try {
+                const [upcoming, s] = await Promise.all([
+                    fetchAppointments(prof.id, { status: 'upcoming' }),
+                    fetchConsultationSettings(prof.id),
+                ])
+                setAppointments(Array.isArray(upcoming?.appointments) ? upcoming.appointments : [])
+                setSettings(s?.settings || null)
+                if (!upcoming?.success) toast.error(upcoming?.error || 'Could not load appointments.')
+                if (!s?.success) toast.error(s?.error || 'Could not load consultation settings.')
+            } catch (error) {
+                setAppointments([])
+                toast.error(error?.message || 'Could not load appointments.')
+            }
         }
     }
 
@@ -65,9 +72,9 @@ export default function ConsultationAppointments() {
     }, [contextProf])
 
     // Status updates
-    const handleStatusChange = (aptId, newStatus, reason = null) => {
+    const handleStatusChange = async (aptId, newStatus, reason = null) => {
         if (!professional?.id) return
-        const res = updateAppointmentStatus(aptId, professional.id, newStatus, reason)
+        const res = await updateAppointmentStatus(aptId, professional.id, newStatus, reason)
         if (res.success) {
             toast.success(
                 newStatus === 'cancelled'

@@ -1,28 +1,49 @@
 // professionalConsultationService.js
-// Handles consultation preferences, weekly schedule, availability, appointments,
-// slot generation (day/week/month), date overrides, and payout configuration for FitKey professionals.
-// Fully persistent via localStorage with defensive fallbacks.
+// Supabase-backed consultation preferences, weekly availability (`professional_availability`),
+// date overrides, slot generation, appointments (`appointments` + `consultations`),
+// earnings summary, and payout configuration for FitKey professionals.
 
+import { supabase } from '../../lib/supabase.js'
 import {
   getItem,
   setItem,
   STORAGE_KEYS,
-  generateId,
 } from '../storageService.js'
 
 export const DAYS_OF_WEEK = [
-  { key: 'monday', label: 'Monday', short: 'Mon' },
-  { key: 'tuesday', label: 'Tuesday', short: 'Tue' },
-  { key: 'wednesday', label: 'Wednesday', short: 'Wed' },
-  { key: 'thursday', label: 'Thursday', short: 'Thu' },
-  { key: 'friday', label: 'Friday', short: 'Fri' },
-  { key: 'saturday', label: 'Saturday', short: 'Sat' },
-  { key: 'sunday', label: 'Sunday', short: 'Sun' },
+  { key: 'monday', label: 'Monday', short: 'Mon', dow: 1 },
+  { key: 'tuesday', label: 'Tuesday', short: 'Tue', dow: 2 },
+  { key: 'wednesday', label: 'Wednesday', short: 'Wed', dow: 3 },
+  { key: 'thursday', label: 'Thursday', short: 'Thu', dow: 4 },
+  { key: 'friday', label: 'Friday', short: 'Fri', dow: 5 },
+  { key: 'saturday', label: 'Saturday', short: 'Sat', dow: 6 },
+  { key: 'sunday', label: 'Sunday', short: 'Sun', dow: 0 },
 ]
+
+const DOW_TO_KEY = {
+  0: 'sunday',
+  1: 'monday',
+  2: 'tuesday',
+  3: 'wednesday',
+  4: 'thursday',
+  5: 'friday',
+  6: 'saturday',
+}
+
+const KEY_TO_DOW = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+}
 
 export const DURATION_OPTIONS = [15, 20, 30]
 export const BUFFER_OPTIONS = [0, 5, 10]
 export const MIN_CONSULTATION_FEE = 100
+export const CONSULTATION_TYPES = ['phone']
 
 export const DEFAULT_SCHEDULE = {
   monday: { enabled: true, startTime: '10:00', endTime: '18:00' },
@@ -37,18 +58,19 @@ export const DEFAULT_SCHEDULE = {
 export const DEFAULT_CONSULTATION_SETTINGS = {
   consultationsEnabled: false,
   offerPhoneConsultations: true,
+  consultationTypes: ['phone'],
   consultationFee: 500,
   durationMinutes: 20,
   bufferMinutes: 5,
   timezone: 'Asia/Kolkata',
   schedule: DEFAULT_SCHEDULE,
   blockedDates: [],
-  dateOverrides: {}, // { 'YYYY-MM-DD': { unavailable: boolean, startTime?: string, endTime?: string, reason?: string } }
-  blockedSlots: [],  // [ 'YYYY-MM-DD_10:00', ... ]
+  dateOverrides: {},
+  blockedSlots: [],
   consultationPhone: '',
   consentPhoneSharing: false,
-  payoutSetupStatus: 'pending', // 'pending' | 'in_review' | 'active'
-  preferredPayoutMethod: 'upi', // 'upi' | 'bank_transfer'
+  payoutSetupStatus: 'pending',
+  preferredPayoutMethod: 'upi',
   payoutUpiId: '',
   accountHolderName: '',
   bankName: '',
@@ -58,248 +80,193 @@ export const DEFAULT_CONSULTATION_SETTINGS = {
   updatedAt: null,
 }
 
-// Pre-seeded demo consultation data for Dr. Ananya Sharma (prof_demo_001)
-const DEMO_CONSULTATION_SETTINGS = {
-  prof_demo_001: {
-    consultationsEnabled: true,
-    offerPhoneConsultations: true,
-    consultationFee: 650,
-    durationMinutes: 20,
-    bufferMinutes: 5,
-    timezone: 'Asia/Kolkata',
-    schedule: {
-      monday: { enabled: true, startTime: '10:00', endTime: '18:00' },
-      tuesday: { enabled: true, startTime: '10:00', endTime: '18:00' },
-      wednesday: { enabled: true, startTime: '10:00', endTime: '18:00' },
-      thursday: { enabled: true, startTime: '10:00', endTime: '18:00' },
-      friday: { enabled: true, startTime: '10:00', endTime: '16:00' },
-      saturday: { enabled: true, startTime: '11:00', endTime: '15:00' },
-      sunday: { enabled: false, startTime: '10:00', endTime: '13:00' },
-    },
-    blockedDates: ['2026-12-25', '2027-01-01'],
-    dateOverrides: {
-      '2026-11-28': {
-        unavailable: false,
-        startTime: '14:00',
-        endTime: '18:00',
-        reason: 'Hospital clinical rounds in morning; afternoon slots open',
-      },
-    },
-    blockedSlots: ['2026-11-25_14:30', '2026-11-26_11:15'],
-    consultationPhone: '+91 98765 43210',
-    consentPhoneSharing: true,
-    payoutSetupStatus: 'active',
-    preferredPayoutMethod: 'upi',
-    payoutUpiId: 'ananya.sharma@okhdfcbank',
-    accountHolderName: 'Dr. Ananya Sharma',
-    bankName: 'HDFC Bank Ltd.',
-    accountNumberMasked: '•••• •••• 4892',
-    ifscCode: 'HDFC0001234',
-    configuredAt: '2026-02-01T10:00:00.000Z',
-    updatedAt: '2026-02-15T12:00:00.000Z',
-  },
+// ─── Internal Helpers ────────────────────────────────────────────────────────
+
+function isUnknownColumnError(err) {
+  const msg = String(err?.message || '')
+  return err?.code === 'PGRST204' || err?.code === '42703' || /column .* does not exist|Could not find the '.*' column/i.test(msg)
 }
 
-// Pre-seeded demo appointments with rich health details and user consent
-const INITIAL_DEMO_APPOINTMENTS = [
-  {
-    id: 'apt_demo_001',
-    professionalId: 'prof_demo_001',
-    patientName: 'Vikram Malhotra',
-    patientPhone: '+91 98111 22334',
-    phoneConsented: true,
-    patientAge: 42,
-    patientGender: 'Male',
-    date: '2026-11-25',
-    time: '11:15 AM',
-    time24: '11:15',
-    durationMinutes: 20,
-    type: 'Phone Consultation',
-    fee: 650,
-    status: 'upcoming', // 'upcoming' | 'completed' | 'cancelled' | 'no_show'
-    notes: 'Follow-up on resting systolic BP variation and exercise tolerance.',
-    healthDetails: {
-      bloodGroup: 'O+',
-      allergies: ['Penicillin'],
-      currentMedications: ['Amlodipine 5mg OD', 'Atorvastatin 10mg'],
-      medicalHistory: ['Essential Hypertension (3 years)', 'Family history of CAD'],
-      chiefComplaint: 'Experiencing mild palpitations after evening cardio sessions.',
-      sharedDocuments: ['Lipid_Panel_Oct2026.pdf', 'ECG_Baseline.pdf'],
-    },
-    cancellationReason: null,
-    bookedAt: '2026-11-22T08:30:00.000Z',
-  },
-  {
-    id: 'apt_demo_002',
-    professionalId: 'prof_demo_001',
-    patientName: 'Sunita Rao',
-    patientPhone: '+91 98222 33445',
-    phoneConsented: true,
-    patientAge: 37,
-    patientGender: 'Female',
-    date: '2026-11-26',
-    time: '04:15 PM',
-    time24: '16:15',
-    durationMinutes: 20,
-    type: 'Phone Consultation',
-    fee: 650,
-    status: 'upcoming',
-    notes: 'Dietary sodium reduction queries and heart rate recovery check.',
-    healthDetails: {
-      bloodGroup: 'B+',
-      allergies: ['No known drug allergies (NKDA)'],
-      currentMedications: ['Thyronorm 50mcg OD', 'Vitamin D3 weekly'],
-      medicalHistory: ['Hypothyroidism (well-controlled)', 'Postpartum gestational diabetes history'],
-      chiefComplaint: 'Seeking optimal heart rate zones for HIIT workout plan.',
-      sharedDocuments: ['Thyroid_Profile_Nov2026.pdf'],
-    },
-    cancellationReason: null,
-    bookedAt: '2026-11-22T14:15:00.000Z',
-  },
-  {
-    id: 'apt_demo_003',
-    professionalId: 'prof_demo_001',
-    patientName: 'Rohan Mehra',
-    patientPhone: '+91 98333 44556',
-    phoneConsented: true,
-    patientAge: 29,
-    patientGender: 'Male',
-    date: '2026-11-20',
-    time: '02:00 PM',
-    time24: '14:00',
-    durationMinutes: 20,
-    type: 'Phone Consultation',
-    fee: 650,
-    status: 'completed',
-    notes: 'Prescribed 4-week aerobic progression with weekly BP checkup.',
-    healthDetails: {
-      bloodGroup: 'A+',
-      allergies: ['Sulfa drugs'],
-      currentMedications: ['None'],
-      medicalHistory: ['Mild asthma in childhood (resolved)', 'Marathon runner'],
-      chiefComplaint: 'Pre-marathon cardiovascular assessment.',
-      sharedDocuments: ['Echo_Report_2026.pdf'],
-    },
-    cancellationReason: null,
-    bookedAt: '2026-11-18T10:00:00.000Z',
-  },
-  {
-    id: 'apt_demo_004',
-    patientName: 'Kavita Joshi',
-    patientPhone: '+91 98444 55667',
-    phoneConsented: true,
-    patientAge: 51,
-    patientGender: 'Female',
-    date: '2026-11-19',
-    time: '12:30 PM',
-    time24: '12:30',
-    durationMinutes: 20,
-    type: 'Phone Consultation',
-    fee: 650,
-    status: 'completed',
-    notes: 'Consultation conducted. Electrolyte hydration guidance provided.',
-    healthDetails: {
-      bloodGroup: 'O-',
-      allergies: ['Aspirin'],
-      currentMedications: ['Metformin 500mg BD', 'Telmisartan 40mg'],
-      medicalHistory: ['Type 2 Diabetes (6 yrs)', 'Hypertension'],
-      chiefComplaint: 'Adjustment of medication timing around morning walks.',
-      sharedDocuments: ['HbA1c_Oct2026.pdf'],
-    },
-    cancellationReason: null,
-    bookedAt: '2026-11-17T11:20:00.000Z',
-  },
-  {
-    id: 'apt_demo_005',
-    professionalId: 'prof_demo_001',
-    patientName: 'Deepak Verma',
-    patientPhone: '+91 98555 66778',
-    phoneConsented: true,
-    patientAge: 45,
-    patientGender: 'Male',
-    date: '2026-11-15',
-    time: '05:00 PM',
-    time24: '17:00',
-    durationMinutes: 20,
-    type: 'Phone Consultation',
-    fee: 650,
-    status: 'cancelled',
-    notes: 'Cancelled due to hospital duty conflict. Reschedule offered.',
-    cancellationReason: 'Doctor emergency clinical duty at hospital',
-    healthDetails: {
-      bloodGroup: 'AB+',
-      allergies: ['None'],
-      currentMedications: ['Fish Oil 1000mg'],
-      medicalHistory: ['High LDL cholesterol'],
-      chiefComplaint: 'Lipid management lifestyle discussion.',
-      sharedDocuments: [],
-    },
-    bookedAt: '2026-11-14T09:00:00.000Z',
-  },
-  {
-    id: 'apt_demo_006',
-    professionalId: 'prof_demo_001',
-    patientName: 'Anita Sengupta',
-    patientPhone: '+91 98666 77889',
-    phoneConsented: false,
-    patientAge: 34,
-    patientGender: 'Female',
-    date: '2026-11-12',
-    time: '03:40 PM',
-    time24: '15:40',
-    durationMinutes: 20,
-    type: 'Phone Consultation',
-    fee: 650,
-    status: 'no_show',
-    notes: 'Patient did not answer the phone call after 3 scheduled attempts.',
-    cancellationReason: null,
-    healthDetails: {
-      bloodGroup: 'B+',
-      allergies: ['None'],
-      currentMedications: ['Iron supplement'],
-      medicalHistory: ['Mild anemia'],
-      chiefComplaint: 'Post-workout fatigue and heart rate spike.',
-      sharedDocuments: [],
-    },
-    bookedAt: '2026-11-10T16:00:00.000Z',
-  },
-]
+function extractMissingColumn(err) {
+  const msg = String(err?.message || '')
+  const pgMatch = msg.match(/column "([^"]+)" of relation/i) || msg.match(/column '([^']+)'/i)
+  if (pgMatch) return pgMatch[1]
+  const pgrstMatch = msg.match(/Could not find the '([^']+)' column/i)
+  return pgrstMatch ? pgrstMatch[1] : null
+}
 
-// ─── Storage Helpers ─────────────────────────────────────────────────────────
+async function runSchemaResilientMutation(payload, mutateFn) {
+  const cleanPayload = { ...payload }
+  const skippedColumns = []
+  let lastError = null
 
-function getAllConsultationSettings() {
-  const data = getItem(STORAGE_KEYS.PROF_CONSULTATION_SETTINGS, null)
-  if (!data) {
-    setItem(STORAGE_KEYS.PROF_CONSULTATION_SETTINGS, DEMO_CONSULTATION_SETTINGS)
-    return DEMO_CONSULTATION_SETTINGS
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const res = await mutateFn(cleanPayload)
+    if (!res?.error) {
+      return { data: res?.data ?? null, error: null, skippedColumns }
+    }
+    lastError = res.error
+    if (!isUnknownColumnError(res.error)) {
+      return { data: null, error: res.error, skippedColumns }
+    }
+    const missing = extractMissingColumn(res.error)
+    if (!missing || !(missing in cleanPayload)) {
+      return { data: null, error: res.error, skippedColumns }
+    }
+    skippedColumns.push(missing)
+    delete cleanPayload[missing]
   }
-  return data
+
+  return { data: null, error: lastError, skippedColumns }
 }
 
-function saveAllConsultationSettings(map) {
-  return setItem(STORAGE_KEYS.PROF_CONSULTATION_SETTINGS, map)
-}
-
-function getAllAppointments() {
-  const data = getItem(STORAGE_KEYS.PROF_APPOINTMENTS, null)
-  if (!data) {
-    setItem(STORAGE_KEYS.PROF_APPOINTMENTS, INITIAL_DEMO_APPOINTMENTS)
-    return INITIAL_DEMO_APPOINTMENTS
+async function assertSession(expectedProfessionalId = null) {
+  const { data, error } = await supabase.auth.getSession()
+  const user = data?.session?.user
+  if (error || !user?.id) {
+    return { ok: false, error: 'Your session expired. Please sign in again.' }
   }
-  return data
+  if (expectedProfessionalId && user.id !== expectedProfessionalId) {
+    return { ok: false, error: 'Unauthorized: you can only modify your own consultation data.' }
+  }
+  return { ok: true, user }
 }
 
-function saveAllAppointments(list) {
-  return setItem(STORAGE_KEYS.PROF_APPOINTMENTS, list)
+function parseMinutes(timeStr) {
+  if (!timeStr) return 0
+  const [h, m] = String(timeStr).split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+function formatMinutesTo24(minutes) {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+function formatMinutesTo12(minutes) {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  const period = h >= 12 ? 'PM' : 'AM'
+  const displayH = h % 12 === 0 ? 12 : h % 12
+  return `${String(displayH).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`
+}
+
+function trimTimeToHHMM(timeStr) {
+  if (!timeStr) return '10:00'
+  return String(timeStr).slice(0, 5)
+}
+
+function buildScheduleFromAvailabilityRows(rows) {
+  const schedule = {}
+  for (const d of DAYS_OF_WEEK) {
+    schedule[d.key] = { ...DEFAULT_SCHEDULE[d.key] }
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return schedule
+  }
+
+  // If rows exist in DB, treat days without active rows as disabled unless explicitly present
+  for (const d of DAYS_OF_WEEK) {
+    schedule[d.key] = {
+      enabled: false,
+      startTime: DEFAULT_SCHEDULE[d.key].startTime,
+      endTime: DEFAULT_SCHEDULE[d.key].endTime,
+    }
+  }
+
+  for (const row of rows) {
+    const key = DOW_TO_KEY[Number(row.day_of_week)]
+    if (!key) continue
+    schedule[key] = {
+      enabled: row.is_active !== false,
+      startTime: trimTimeToHHMM(row.start_time),
+      endTime: trimTimeToHHMM(row.end_time),
+    }
+  }
+  return schedule
+}
+
+function normalizeSettingsFromDb(ppRow, availabilityRows = []) {
+  const schedule = buildScheduleFromAvailabilityRows(availabilityRows)
+  const isEnabled = Boolean(ppRow?.consultations_enabled)
+
+  return {
+    ...DEFAULT_CONSULTATION_SETTINGS,
+    consultationsEnabled: isEnabled,
+    isEnabled,
+    offerPhoneConsultations: ppRow?.offer_phone_consultations ?? true,
+    consultationTypes: Array.isArray(ppRow?.consultation_types) && ppRow.consultation_types.length > 0
+      ? ppRow.consultation_types
+      : ['phone'],
+    consultationFee: ppRow?.consultation_fee != null ? Number(ppRow.consultation_fee) : 500,
+    durationMinutes: ppRow?.duration_minutes != null ? Number(ppRow.duration_minutes) : 20,
+    bufferMinutes: ppRow?.buffer_minutes != null ? Number(ppRow.buffer_minutes) : 5,
+    timezone: ppRow?.timezone || 'Asia/Kolkata',
+    schedule,
+    blockedDates: Array.isArray(ppRow?.blocked_dates) ? [...ppRow.blocked_dates] : [],
+    dateOverrides: ppRow?.date_overrides && typeof ppRow.date_overrides === 'object' ? ppRow.date_overrides : {},
+    blockedSlots: Array.isArray(ppRow?.blocked_slots) ? [...ppRow.blocked_slots] : [],
+    consultationPhone: ppRow?.consultation_phone || '',
+    contactPhone: ppRow?.consultation_phone || '',
+    consentPhoneSharing: Boolean(ppRow?.consent_phone_sharing),
+    phoneConsent: Boolean(ppRow?.consent_phone_sharing),
+    payoutSetupStatus: ppRow?.payout_setup_status || 'pending',
+    preferredPayoutMethod: ppRow?.preferred_payout_method || 'upi',
+    payoutUpiId: ppRow?.payout_upi_id || '',
+    accountHolderName: ppRow?.account_holder_name || '',
+    bankName: ppRow?.bank_name || '',
+    accountNumberMasked: ppRow?.account_number_masked || '',
+    ifscCode: ppRow?.ifsc_code || '',
+    configuredAt: ppRow?.configured_at || null,
+    updatedAt: ppRow?.updated_at || null,
+  }
+}
+
+function cacheSettings(professionalId, settings) {
+  if (!professionalId || !settings) return
+  const all = getItem(STORAGE_KEYS.PROF_CONSULTATION_SETTINGS, {})
+  all[professionalId] = settings
+  setItem(STORAGE_KEYS.PROF_CONSULTATION_SETTINGS, all)
+}
+
+function cacheAppointments(professionalId, list) {
+  if (!professionalId || !Array.isArray(list)) return
+  const existing = getItem(STORAGE_KEYS.PROF_APPOINTMENTS, [])
+  const others = Array.isArray(existing)
+    ? existing.filter((a) => a.professionalId !== professionalId)
+    : []
+  setItem(STORAGE_KEYS.PROF_APPOINTMENTS, [...list, ...others])
+}
+
+export function validateScheduleSlots(schedule) {
+  if (!schedule || typeof schedule !== 'object') {
+    return { valid: true }
+  }
+  for (const d of DAYS_OF_WEEK) {
+    const dayCfg = schedule[d.key]
+    if (!dayCfg || !dayCfg.enabled) continue
+    const startMin = parseMinutes(dayCfg.startTime)
+    const endMin = parseMinutes(dayCfg.endTime)
+    if (endMin <= startMin) {
+      return {
+        valid: false,
+        error: `${d.label}: End time (${dayCfg.endTime}) must be after start time (${dayCfg.startTime}).`,
+      }
+    }
+  }
+  return { valid: true }
 }
 
 // ─── Settings API ────────────────────────────────────────────────────────────
 
+/**
+ * Synchronous cache getter for legacy / user-side discovery callers.
+ */
 export function getConsultationSettings(professionalId) {
-  if (!professionalId) return { ...DEFAULT_CONSULTATION_SETTINGS }
-  const all = getAllConsultationSettings()
-  const found = all[professionalId]
-
+  if (!professionalId) return { ...DEFAULT_CONSULTATION_SETTINGS, schedule: { ...DEFAULT_SCHEDULE } }
+  const all = getItem(STORAGE_KEYS.PROF_CONSULTATION_SETTINGS, {})
+  const found = all?.[professionalId]
   if (!found) {
     return {
       ...DEFAULT_CONSULTATION_SETTINGS,
@@ -309,7 +276,6 @@ export function getConsultationSettings(professionalId) {
       blockedSlots: [],
     }
   }
-
   return {
     ...DEFAULT_CONSULTATION_SETTINGS,
     ...found,
@@ -323,16 +289,59 @@ export function getConsultationSettings(professionalId) {
   }
 }
 
-export function saveConsultationSettings(professionalId, updates) {
-  if (!professionalId) {
-    return { success: false, error: 'Professional ID is required.' }
+/**
+ * Authoritative async fetcher for consultation settings & weekly availability from Supabase.
+ */
+export async function fetchConsultationSettings(professionalId = null) {
+  const authCheck = await assertSession(professionalId)
+  if (!authCheck.ok) {
+    return { success: false, error: authCheck.error, settings: getConsultationSettings(professionalId) }
   }
 
-  const current = getConsultationSettings(professionalId)
+  const userId = authCheck.user.id
+  const [ppRes, availRes] = await Promise.all([
+    supabase.from('professional_profiles').select('*').eq('user_id', userId).maybeSingle(),
+    supabase.from('professional_availability').select('*').eq('professional_id', userId),
+  ])
+
+  if (ppRes.error) {
+    return {
+      success: false,
+      error: ppRes.error.message || 'Failed to load consultation settings.',
+      settings: getConsultationSettings(userId),
+    }
+  }
+
+  if (availRes.error) {
+    return {
+      success: false,
+      error: availRes.error.message || 'Failed to load weekly availability.',
+      settings: getConsultationSettings(userId),
+    }
+  }
+
+  const normalized = normalizeSettingsFromDb(ppRes.data || {}, availRes.data || [])
+  cacheSettings(userId, normalized)
+  return { success: true, settings: normalized }
+}
+
+/**
+ * Persist consultation settings & weekly availability (`professional_availability`) to Supabase.
+ */
+export async function saveConsultationSettings(professionalId, updates = {}) {
+  const authCheck = await assertSession(professionalId)
+  if (!authCheck.ok) {
+    return { success: false, error: authCheck.error }
+  }
+  const userId = authCheck.user.id
+
+  const currentRes = await fetchConsultationSettings(userId)
+  if (!currentRes.success) return currentRes
+  const current = currentRes.settings || getConsultationSettings(userId)
 
   if (updates.consultationFee !== undefined) {
     const feeNum = Number(updates.consultationFee)
-    if (isNaN(feeNum) || feeNum < MIN_CONSULTATION_FEE) {
+    if (Number.isNaN(feeNum) || feeNum < MIN_CONSULTATION_FEE) {
       return {
         success: false,
         error: `Consultation fee must be at least ₹${MIN_CONSULTATION_FEE}.`,
@@ -358,74 +367,196 @@ export function saveConsultationSettings(professionalId, updates) {
     }
   }
 
-  const willBeEnabled = updates.consultationsEnabled !== undefined
+  if (updates.schedule !== undefined) {
+    const schedCheck = validateScheduleSlots(updates.schedule)
+    if (!schedCheck.valid) {
+      return { success: false, error: schedCheck.error }
+    }
+  }
+
+  const resolvedEnabled = updates.consultationsEnabled !== undefined
     ? Boolean(updates.consultationsEnabled)
-    : current.consultationsEnabled
+    : updates.isEnabled !== undefined
+      ? Boolean(updates.isEnabled)
+      : current.consultationsEnabled
 
-  const candidatePhone = updates.consultationPhone !== undefined
-    ? String(updates.consultationPhone).trim()
-    : current.consultationPhone
+  const resolvedPhone = updates.consultationPhone !== undefined
+    ? String(updates.consultationPhone || '').trim()
+    : updates.contactPhone !== undefined
+      ? String(updates.contactPhone || '').trim()
+      : current.consultationPhone
 
-  if (willBeEnabled && candidatePhone && candidatePhone.replace(/\D/g, '').length < 10) {
+  if (resolvedEnabled && resolvedPhone && resolvedPhone.replace(/\D/g, '').length < 10) {
     return {
       success: false,
       error: 'Please provide a valid 10-digit consultation phone number.',
     }
   }
 
-  const updatedSettings = {
+  const resolvedConsent = updates.consentPhoneSharing !== undefined
+    ? Boolean(updates.consentPhoneSharing)
+    : updates.phoneConsent !== undefined
+      ? Boolean(updates.phoneConsent)
+      : current.consentPhoneSharing
+
+  const merged = {
     ...current,
     ...updates,
+    consultationsEnabled: resolvedEnabled,
+    isEnabled: resolvedEnabled,
+    consultationPhone: resolvedPhone,
+    contactPhone: resolvedPhone,
+    consentPhoneSharing: resolvedConsent,
+    phoneConsent: resolvedConsent,
     configuredAt: current.configuredAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
 
-  const all = getAllConsultationSettings()
-  all[professionalId] = updatedSettings
-  saveAllConsultationSettings(all)
+  // Handle nested payoutDetails if passed from older modal forms
+  if (updates.payoutDetails && typeof updates.payoutDetails === 'object') {
+    if (updates.payoutDetails.method) merged.preferredPayoutMethod = updates.payoutDetails.method
+    if (updates.payoutDetails.upiId !== undefined) merged.payoutUpiId = updates.payoutDetails.upiId
+    if (updates.payoutDetails.bankName !== undefined) merged.bankName = updates.payoutDetails.bankName
+    if (updates.payoutDetails.accountHolderName !== undefined) {
+      merged.accountHolderName = updates.payoutDetails.accountHolderName
+    }
+    if (updates.payoutDetails.ifscCode !== undefined) merged.ifscCode = updates.payoutDetails.ifscCode
+  }
 
+  const ppPayload = {
+    user_id: userId,
+    consultations_enabled: Boolean(merged.consultationsEnabled),
+    offer_phone_consultations: Boolean(merged.offerPhoneConsultations),
+    consultation_types: Array.isArray(merged.consultationTypes) && merged.consultationTypes.length > 0
+      ? merged.consultationTypes
+      : ['phone'],
+    consultation_fee: Number(merged.consultationFee) || 500,
+    duration_minutes: Number(merged.durationMinutes) || 20,
+    buffer_minutes: Number.isFinite(Number(merged.bufferMinutes)) ? Number(merged.bufferMinutes) : 5,
+    timezone: merged.timezone || 'Asia/Kolkata',
+    blocked_dates: Array.isArray(merged.blockedDates) ? merged.blockedDates : [],
+    date_overrides: merged.dateOverrides || {},
+    blocked_slots: Array.isArray(merged.blockedSlots) ? merged.blockedSlots : [],
+    consultation_phone: merged.consultationPhone || null,
+    consent_phone_sharing: Boolean(merged.consentPhoneSharing),
+    payout_setup_status: merged.payoutSetupStatus || 'pending',
+    preferred_payout_method: merged.preferredPayoutMethod || 'upi',
+    payout_upi_id: merged.payoutUpiId || null,
+    account_holder_name: merged.accountHolderName || null,
+    bank_name: merged.bankName || null,
+    account_number_masked: merged.accountNumberMasked || null,
+    ifsc_code: merged.ifscCode || null,
+    configured_at: merged.configuredAt,
+    updated_at: merged.updatedAt,
+  }
+
+  const ppWrite = await runSchemaResilientMutation(ppPayload, (clean) =>
+    supabase.from('professional_profiles').upsert(clean, { onConflict: 'user_id' })
+  )
+
+  if (ppWrite.error) {
+    return {
+      success: false,
+      error: ppWrite.error.message || 'Failed to save consultation settings.',
+    }
+  }
+
+  // Sync weekly schedule to `public.professional_availability` if schedule was updated or not yet seeded
+  if (updates.schedule !== undefined || !current.configuredAt) {
+    const slotRows = DAYS_OF_WEEK.map((d) => {
+      const cfg = merged.schedule?.[d.key] || DEFAULT_SCHEDULE[d.key]
+      return {
+        day_of_week: KEY_TO_DOW[d.key],
+        start_time: cfg.startTime || '10:00',
+        end_time: cfg.endTime || '18:00',
+        is_active: Boolean(cfg.enabled),
+      }
+    })
+
+    const rpcRes = await supabase.rpc('upsert_professional_availability_schedule', {
+      p_slots: slotRows,
+    })
+
+    if (rpcRes.error) {
+      // Fallback if RPC isn't deployed yet: scoped delete + insert under RLS
+      const delRes = await supabase
+        .from('professional_availability')
+        .delete()
+        .eq('professional_id', userId)
+
+      if (delRes.error) {
+        return {
+          success: false,
+          error: delRes.error.message || 'Failed to update availability schedule.',
+        }
+      }
+
+      const insertRows = slotRows.map((s) => ({
+        professional_id: userId,
+        ...s,
+      }))
+      const insRes = await supabase.from('professional_availability').insert(insertRows)
+      if (insRes.error) {
+        return {
+          success: false,
+          error: insRes.error.message || 'Failed to save availability slots.',
+        }
+      }
+    }
+  }
+
+  cacheSettings(userId, merged)
   return {
     success: true,
-    settings: updatedSettings,
+    settings: merged,
     message: 'Consultation settings saved successfully!',
   }
 }
 
-export function toggleConsultationStatus(professionalId) {
-  const current = getConsultationSettings(professionalId)
+export async function toggleConsultationStatus(professionalId) {
+  const currentRes = await fetchConsultationSettings(professionalId)
+  if (!currentRes.success) return currentRes
   return saveConsultationSettings(professionalId, {
-    consultationsEnabled: !current.consultationsEnabled,
+    consultationsEnabled: !currentRes.settings.consultationsEnabled,
   })
 }
 
 // ─── Blocked Dates & Date-Specific Overrides ─────────────────────────────────
 
-export function addBlockedDate(professionalId, dateString, reason = 'Unavailable') {
+export async function addBlockedDate(professionalId, dateString) {
   if (!dateString) return { success: false, error: 'Date is required.' }
-  const current = getConsultationSettings(professionalId)
-  const existing = current.blockedDates || []
+  const currentRes = await fetchConsultationSettings(professionalId)
+  if (!currentRes.success) return currentRes
+  const existing = currentRes.settings.blockedDates || []
   if (existing.includes(dateString)) {
     return { success: false, error: 'This date is already blocked.' }
   }
-
   const updated = [...existing, dateString].sort()
   return saveConsultationSettings(professionalId, { blockedDates: updated })
 }
 
-export function removeBlockedDate(professionalId, dateString) {
-  const current = getConsultationSettings(professionalId)
-  const existing = current.blockedDates || []
+export async function removeBlockedDate(professionalId, dateString) {
+  const currentRes = await fetchConsultationSettings(professionalId)
+  if (!currentRes.success) return currentRes
+  const existing = currentRes.settings.blockedDates || []
   const updated = existing.filter((d) => d !== dateString)
   return saveConsultationSettings(professionalId, { blockedDates: updated })
 }
 
-/**
- * Set custom hours or override for a specific date (overrides weekly schedule).
- */
-export function setDateOverride(professionalId, dateString, overrideConfig) {
+export async function setDateOverride(professionalId, dateString, overrideConfig) {
   if (!dateString) return { success: false, error: 'Date is required.' }
-  const current = getConsultationSettings(professionalId)
-  const dateOverrides = { ...(current.dateOverrides || {}) }
+
+  if (!overrideConfig?.unavailable) {
+    const startMin = parseMinutes(overrideConfig?.startTime || '10:00')
+    const endMin = parseMinutes(overrideConfig?.endTime || '18:00')
+    if (endMin <= startMin) {
+      return { success: false, error: 'End time must be after start time.' }
+    }
+  }
+
+  const currentRes = await fetchConsultationSettings(professionalId)
+  if (!currentRes.success) return currentRes
+  const dateOverrides = { ...(currentRes.settings.dateOverrides || {}) }
 
   dateOverrides[dateString] = {
     unavailable: Boolean(overrideConfig.unavailable),
@@ -438,20 +569,19 @@ export function setDateOverride(professionalId, dateString, overrideConfig) {
   return saveConsultationSettings(professionalId, { dateOverrides })
 }
 
-export function removeDateOverride(professionalId, dateString) {
-  const current = getConsultationSettings(professionalId)
-  const dateOverrides = { ...(current.dateOverrides || {}) }
+export async function removeDateOverride(professionalId, dateString) {
+  const currentRes = await fetchConsultationSettings(professionalId)
+  if (!currentRes.success) return currentRes
+  const dateOverrides = { ...(currentRes.settings.dateOverrides || {}) }
   delete dateOverrides[dateString]
   return saveConsultationSettings(professionalId, { dateOverrides })
 }
 
-/**
- * Block or unblock an individual slot (format: 'YYYY-MM-DD_HH:MM').
- */
-export function toggleSlotBlock(professionalId, dateString, time24) {
+export async function toggleSlotBlock(professionalId, dateString, time24) {
   const slotKey = `${dateString}_${time24}`
-  const current = getConsultationSettings(professionalId)
-  const existing = current.blockedSlots || []
+  const currentRes = await fetchConsultationSettings(professionalId)
+  if (!currentRes.success) return currentRes
+  const existing = currentRes.settings.blockedSlots || []
 
   let updated
   let isBlockedNow = false
@@ -462,7 +592,7 @@ export function toggleSlotBlock(professionalId, dateString, time24) {
     isBlockedNow = true
   }
 
-  const res = saveConsultationSettings(professionalId, { blockedSlots: updated })
+  const res = await saveConsultationSettings(professionalId, { blockedSlots: updated })
   return {
     ...res,
     slotKey,
@@ -472,55 +602,20 @@ export function toggleSlotBlock(professionalId, dateString, time24) {
 
 // ─── Slot Generation Engine ──────────────────────────────────────────────────
 
-function parseMinutes(timeStr) {
-  if (!timeStr) return 0
-  const [h, m] = timeStr.split(':').map(Number)
-  return (h || 0) * 60 + (m || 0)
-}
+export function generateDaySlots(professionalId, dateString, preloaded = {}) {
+  const settings = preloaded.settings || getConsultationSettings(professionalId)
+  const appointments = preloaded.appointments || getAppointments(professionalId)
 
-function formatMinutesTo24(minutes) {
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-}
-
-function formatMinutesTo12(minutes) {
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  const period = h >= 12 ? 'PM' : 'AM'
-  const displayH = h % 12 === 0 ? 12 : h % 12
-  return `${String(displayH).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`
-}
-
-/**
- * Generate all appointment slots for a specific date.
- * Takes into account:
- * - Weekly schedule for the weekday
- * - Date-specific blocked status (blockedDates)
- * - Date-specific custom hours (dateOverrides)
- * - Individual slot blocks (blockedSlots)
- * - Booked appointments (Availability Sync: booked slots cannot be re-booked)
- * - Duration + buffer time
- * - Strict working hours boundary (never generates slots outside working hours)
- */
-export function generateDaySlots(professionalId, dateString) {
-  const settings = getConsultationSettings(professionalId)
-  const appointments = getAppointments(professionalId)
-
-  // Determine weekday
   const [year, month, day] = dateString.split('-').map(Number)
   const dateObj = new Date(year, month - 1, day)
   const dayIndex = dateObj.getDay()
-  const dayKeyMap = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-  const dayKey = dayKeyMap[dayIndex]
+  const dayKey = DOW_TO_KEY[dayIndex]
   const dayLabel = DAYS_OF_WEEK.find((d) => d.key === dayKey)?.label || dayKey
 
-  // Check date-level overrides
   const isDateInBlocked = (settings.blockedDates || []).includes(dateString)
   const dateOverride = (settings.dateOverrides || {})[dateString]
   const isOverrideUnavailable = dateOverride?.unavailable === true
 
-  // Is entire date blocked?
   if (isDateInBlocked || isOverrideUnavailable) {
     return {
       date: dateString,
@@ -528,17 +623,17 @@ export function generateDaySlots(professionalId, dateString) {
       dayLabel,
       isBlockedDate: true,
       isOffDay: false,
-      reason: isOverrideUnavailable ? (dateOverride.reason || 'Marked unavailable for this date') : 'Marked unavailable on calendar',
+      reason: isOverrideUnavailable
+        ? (dateOverride.reason || 'Marked unavailable for this date')
+        : 'Marked unavailable on calendar',
       slots: [],
       stats: { total: 0, available: 0, booked: 0, blocked: 0 },
     }
   }
 
-  // Base schedule for the day
   const regularSchedule = settings.schedule?.[dayKey]
   const hasCustomHours = Boolean(dateOverride?.startTime && dateOverride?.endTime)
 
-  // Is day off?
   if (!hasCustomHours && !regularSchedule?.enabled) {
     return {
       date: dateString,
@@ -552,20 +647,20 @@ export function generateDaySlots(professionalId, dateString) {
     }
   }
 
-  // Determine working time limits
   const startTime = hasCustomHours ? dateOverride.startTime : regularSchedule.startTime
   const endTime = hasCustomHours ? dateOverride.endTime : regularSchedule.endTime
 
   const duration = Number(settings.durationMinutes) || 20
-  const buffer = Number(settings.bufferMinutes) || 5
+  const buffer = Number.isFinite(Number(settings.bufferMinutes)) ? Number(settings.bufferMinutes) : 5
   const step = duration + buffer
 
   const startMin = parseMinutes(startTime)
   const endMin = parseMinutes(endTime)
 
-  // Find active appointments on this date
   const dayAppointments = appointments.filter(
-    (a) => a.date === dateString && (a.status === 'upcoming' || a.status === 'completed')
+    (a) =>
+      a.date === dateString &&
+      (a.status === 'upcoming' || a.status === 'confirmed' || a.status === 'in_progress' || a.status === 'completed')
   )
 
   const slots = []
@@ -577,10 +672,8 @@ export function generateDaySlots(professionalId, dateString) {
     const time12 = formatMinutesTo12(currMin)
     const endTime24 = formatMinutesTo24(slotEndMin)
     const endTime12 = formatMinutesTo12(slotEndMin)
-
     const slotKey = `${dateString}_${time24}`
 
-    // Check if booked by appointment
     const matchedApt = dayAppointments.find((a) => {
       if (a.time24 && a.time24 === time24) return true
       if (a.time && (a.time === time12 || a.time.replace(/^0/, '') === time12.replace(/^0/, ''))) return true
@@ -591,12 +684,10 @@ export function generateDaySlots(professionalId, dateString) {
       return false
     })
 
-    // Check if slot blocked individually
     const isSlotBlocked = (settings.blockedSlots || []).includes(slotKey)
 
     let status = 'available'
     let reason = null
-
     if (matchedApt) {
       status = 'booked'
       reason = `Booked with ${matchedApt.patientName}`
@@ -615,7 +706,7 @@ export function generateDaySlots(professionalId, dateString) {
       label: `${time12} – ${endTime12}`,
       durationMinutes: duration,
       bufferMinutes: buffer,
-      status, // 'available' | 'booked' | 'blocked'
+      status,
       reason,
       appointment: matchedApt || null,
     })
@@ -645,10 +736,7 @@ export function generateDaySlots(professionalId, dateString) {
   }
 }
 
-/**
- * Generate slots for a full week (Monday through Sunday).
- */
-export function generateWeekSlots(professionalId, mondayDateString) {
+export function generateWeekSlots(professionalId, mondayDateString, preloaded = {}) {
   const [year, month, day] = mondayDateString.split('-').map(Number)
   const mondayObj = new Date(year, month - 1, day)
 
@@ -660,26 +748,18 @@ export function generateWeekSlots(professionalId, mondayDateString) {
     const mStr = String(d.getMonth() + 1).padStart(2, '0')
     const dStr = String(d.getDate()).padStart(2, '0')
     const dateStr = `${yStr}-${mStr}-${dStr}`
-
-    days.push(generateDaySlots(professionalId, dateStr))
+    days.push(generateDaySlots(professionalId, dateStr, preloaded))
   }
-
   return days
 }
 
-/**
- * Generate month calendar overview for a given year and month (1-indexed).
- */
-export function generateMonthSummary(professionalId, year, month) {
-  const settings = getConsultationSettings(professionalId)
-  const appointments = getAppointments(professionalId)
-
+export function generateMonthSummary(professionalId, year, month, preloaded = {}) {
   const numDays = new Date(year, month, 0).getDate()
   const days = []
 
   for (let i = 1; i <= numDays; i++) {
     const dStr = `${year}-${String(month).padStart(2, '0')}-${String(i).padStart(2, '0')}`
-    const dayData = generateDaySlots(professionalId, dStr)
+    const dayData = generateDaySlots(professionalId, dStr, preloaded)
     days.push({
       date: dStr,
       dayNumber: i,
@@ -691,75 +771,256 @@ export function generateMonthSummary(professionalId, year, month) {
       stats: dayData.stats,
     })
   }
-
   return days
 }
 
-// ─── Appointments API ────────────────────────────────────────────────────────
+// ─── Appointments & Consultations API ────────────────────────────────────────
 
+function normalizeAppointmentRow(row, consultationRow = null, patientProfile = null) {
+  const time24 = row.start_time ? trimTimeToHHMM(row.start_time) : '10:00'
+  const startMin = parseMinutes(time24)
+  const time12 = formatMinutesTo12(startMin)
+
+  const rawStatus = String(row.status || 'upcoming').toLowerCase()
+  const status = rawStatus === 'confirmed' ? 'upcoming' : rawStatus
+
+  return {
+    id: row.id,
+    professionalId: row.professional_id,
+    userId: row.user_id,
+    patientName: row.patient_name || patientProfile?.full_name || 'Patient',
+    patientPhone: row.phone_consented ? (row.patient_phone || patientProfile?.phone || '') : '',
+    phoneConsented: Boolean(row.phone_consented),
+    patientAge: row.patient_age ?? '—',
+    patientGender: row.patient_gender || '—',
+    date: row.appointment_date ? String(row.appointment_date).slice(0, 10) : '',
+    time: time12,
+    time24,
+    endTime24: row.end_time ? trimTimeToHHMM(row.end_time) : formatMinutesTo24(startMin + (Number(row.duration_minutes) || 20)),
+    durationMinutes: Number(row.duration_minutes || consultationRow?.duration_minutes || 20),
+    type: row.consultation_type || consultationRow?.consultation_type || 'Phone Consultation',
+    fee: Number(row.fee ?? consultationRow?.fee ?? 0),
+    status,
+    rawStatus,
+    consultationId: consultationRow?.id || null,
+    consultationStatus: consultationRow?.status || null,
+    paymentStatus: consultationRow?.payment_status || 'pending',
+    notes: row.notes || consultationRow?.notes || '',
+    healthDetails: row.health_details && typeof row.health_details === 'object' ? row.health_details : {},
+    cancellationReason: row.cancellation_reason || null,
+    bookedAt: row.booked_at || row.created_at || null,
+    updatedAt: row.updated_at || null,
+  }
+}
+
+/**
+ * Synchronous cache getter for backward compatibility.
+ */
 export function getAppointments(professionalId, { status = 'all' } = {}) {
   if (!professionalId) return []
-  const all = getAllAppointments()
-  let list = all.filter((a) => a.professionalId === professionalId)
+  const all = getItem(STORAGE_KEYS.PROF_APPOINTMENTS, [])
+  let list = Array.isArray(all) ? all.filter((a) => a.professionalId === professionalId) : []
 
   if (status && status !== 'all') {
-    list = list.filter((a) => a.status === status.toLowerCase())
+    const target = status.toLowerCase()
+    list = list.filter((a) => a.status === target || (target === 'upcoming' && a.rawStatus === 'confirmed'))
   }
 
-  // Chronological sorting
   if (status === 'upcoming') {
     return list.sort((a, b) => new Date(`${a.date} ${a.time24 || a.time}`) - new Date(`${b.date} ${b.time24 || b.time}`))
   }
-
   return list.sort((a, b) => new Date(`${b.date} ${b.time24 || b.time}`) - new Date(`${a.date} ${a.time24 || a.time}`))
 }
 
 /**
- * Update appointment status with optional cancellation reason.
- * Availability sync: When cancelled, the appointment is marked cancelled,
- * freeing the corresponding slot on the calendar.
+ * Authoritative async fetcher for appointments & linked consultations from Supabase.
  */
-export function updateAppointmentStatus(appointmentId, professionalId, newStatus, reason = null) {
-  const all = getAllAppointments()
-  const index = all.findIndex((a) => a.id === appointmentId && a.professionalId === professionalId)
-  if (index === -1) return { success: false, error: 'Appointment not found.' }
+export async function fetchAppointments(professionalId, { status = 'all' } = {}) {
+  const authCheck = await assertSession(professionalId)
+  if (!authCheck.ok) {
+    return { success: false, error: authCheck.error, appointments: [] }
+  }
+  const userId = authCheck.user.id
 
-  all[index] = {
-    ...all[index],
-    status: newStatus,
-    cancellationReason: newStatus === 'cancelled' ? (reason || 'Cancelled by practitioner') : all[index].cancellationReason,
-    updatedAt: new Date().toISOString(),
+  const [aptRes, consultRes] = await Promise.all([
+    supabase
+      .from('appointments')
+      .select('*')
+      .eq('professional_id', userId)
+      .order('appointment_date', { ascending: status === 'upcoming' }),
+    supabase
+      .from('consultations')
+      .select('*')
+      .eq('professional_id', userId),
+  ])
+
+  if (aptRes.error) {
+    return {
+      success: false,
+      error: aptRes.error.message || 'Failed to load appointments.',
+      appointments: [],
+    }
   }
 
-  saveAllAppointments(all)
-  return { success: true, appointment: all[index] }
+  if (consultRes.error) {
+    return {
+      success: false,
+      error: consultRes.error.message || 'Failed to load consultation records.',
+      appointments: [],
+    }
+  }
+
+  const consultByApt = new Map()
+  for (const c of consultRes.data || []) {
+    if (c.appointment_id) consultByApt.set(c.appointment_id, c)
+  }
+
+  const normalizedAll = (aptRes.data || []).map((row) =>
+    normalizeAppointmentRow(row, consultByApt.get(row.id) || null, null)
+  )
+
+  cacheAppointments(userId, normalizedAll)
+
+  let filtered = normalizedAll
+  if (status && status !== 'all') {
+    const target = status.toLowerCase()
+    filtered = normalizedAll.filter(
+      (a) => a.status === target || (target === 'upcoming' && a.rawStatus === 'confirmed')
+    )
+  }
+
+  if (status === 'upcoming') {
+    filtered.sort((a, b) => new Date(`${a.date} ${a.time24}`) - new Date(`${b.date} ${b.time24}`))
+  } else {
+    filtered.sort((a, b) => new Date(`${b.date} ${b.time24}`) - new Date(`${a.date} ${a.time24}`))
+  }
+
+  return { success: true, appointments: filtered }
+}
+
+/**
+ * Cancel appointment as patient via `cancel_patient_appointment` RPC.
+ */
+export async function cancelPatientAppointment(appointmentId, reason = null) {
+  const session = await supabase.auth.getSession()
+  const user = session?.data?.session?.user
+  if (!user?.id) {
+    return { success: false, error: 'Not authenticated.' }
+  }
+
+  const rpcRes = await supabase.rpc('cancel_patient_appointment', {
+    p_appointment_id: appointmentId,
+    p_reason: reason || 'Cancelled by patient',
+  })
+
+  if (!rpcRes.error && rpcRes.data) {
+    if (rpcRes.data.success === false) {
+      return { success: false, error: rpcRes.data.error || 'Could not cancel appointment.' }
+    }
+    return { success: true, appointment: rpcRes.data.appointment }
+  }
+
+  return { success: false, error: rpcRes.error?.message || 'Failed to cancel appointment.' }
+}
+
+/**
+ * Update appointment status atomically via Supabase RPC `update_professional_appointment_status`,
+ * keeping `appointments` and `consultations` synchronized and enforcing `auth.uid() = professional_id`.
+ */
+export async function updateAppointmentStatus(appointmentId, professionalId, newStatus, reason = null, notes = null) {
+  const authCheck = await assertSession(professionalId)
+  if (!authCheck.ok) {
+    if (newStatus === 'cancelled') {
+      return cancelPatientAppointment(appointmentId, reason)
+    }
+    return { success: false, error: authCheck.error }
+  }
+  const userId = authCheck.user.id
+
+  const rpcRes = await supabase.rpc('update_professional_appointment_status', {
+    p_appointment_id: appointmentId,
+    p_new_status: newStatus,
+    p_reason: reason,
+    p_notes: notes,
+  })
+
+  if (!rpcRes.error && rpcRes.data) {
+    if (rpcRes.data.success === false) {
+      return { success: false, error: rpcRes.data.error || 'Could not update appointment.' }
+    }
+    const refreshed = await fetchAppointments(userId)
+    const updated = refreshed.appointments?.find((a) => a.id === appointmentId) || null
+    return { success: true, appointment: updated }
+  }
+
+  // Fallback if RPC not yet deployed: direct RLS-scoped update on appointments
+  const { data: existing, error: fetchErr } = await supabase
+    .from('appointments')
+    .select('*')
+    .eq('id', appointmentId)
+    .eq('professional_id', userId)
+    .maybeSingle()
+
+  if (fetchErr || !existing) {
+    return { success: false, error: fetchErr?.message || 'Appointment not found or unauthorized.' }
+  }
+
+  const updatePatch = {
+    status: newStatus,
+    updated_at: new Date().toISOString(),
+  }
+  if (newStatus === 'cancelled') {
+    updatePatch.cancellation_reason = reason || 'Cancelled by practitioner'
+  }
+  if (notes) {
+    updatePatch.notes = notes
+  }
+
+  const { error: updErr } = await supabase
+    .from('appointments')
+    .update(updatePatch)
+    .eq('id', appointmentId)
+    .eq('professional_id', userId)
+
+  if (updErr) {
+    return { success: false, error: updErr.message || 'Failed to update appointment.' }
+  }
+
+  const refreshed = await fetchAppointments(userId)
+  const updated = refreshed.appointments?.find((a) => a.id === appointmentId) || null
+  return { success: true, appointment: updated }
 }
 
 // ─── Earnings & Payment API ──────────────────────────────────────────────────
 
-export function getEarningsSummary(professionalId) {
-  const appointments = getAppointments(professionalId)
-  const completed = appointments.filter((a) => a.status === 'completed')
+export function getEarningsSummary(professionalId, preloadedAppointments = null) {
+  const appointments = Array.isArray(preloadedAppointments)
+    ? preloadedAppointments
+    : getAppointments(professionalId)
 
+  const completed = appointments.filter((a) => a.status === 'completed')
   const totalCompletedCount = completed.length
   const grossEarnings = completed.reduce((sum, a) => sum + (Number(a.fee) || 0), 0)
   const platformFee = Math.round(grossEarnings * 0.1)
   const netEarnings = grossEarnings - platformFee
 
-  const pendingPayout = Math.round(netEarnings * 0.25)
-  const completedPayouts = netEarnings - pendingPayout
+  // Preserve real payment_status if present instead of inventing paid payouts
+  const settledCompleted = completed.filter((a) => a.paymentStatus === 'paid' || a.paymentStatus === 'settled')
+  const settledNet = settledCompleted.reduce((sum, a) => sum + Math.round((Number(a.fee) || 0) * 0.9), 0)
+  const pendingPayout = Math.max(0, netEarnings - settledNet)
 
   const history = completed.map((apt) => {
-    const net = Math.round(apt.fee * 0.9)
+    const feeNum = Number(apt.fee) || 0
+    const net = Math.round(feeNum * 0.9)
     return {
       id: `earn_${apt.id}`,
       appointmentId: apt.id,
       patientName: apt.patientName,
       date: apt.date,
-      grossFee: apt.fee,
-      platformFee: Math.round(apt.fee * 0.1),
+      grossFee: feeNum,
+      platformFee: Math.round(feeNum * 0.1),
       netEarned: net,
-      status: 'Settled',
+      status: apt.paymentStatus === 'paid' || apt.paymentStatus === 'settled' ? 'Settled' : 'Pending Settlement',
       payoutMethod: 'Direct Bank Transfer / UPI',
     }
   })
@@ -774,8 +1035,19 @@ export function getEarningsSummary(professionalId) {
     platformFee,
     netEarnings,
     pendingPayout,
-    completedPayouts,
+    completedPayouts: settledNet,
     history,
+  }
+}
+
+export async function fetchEarningsSummary(professionalId) {
+  const res = await fetchAppointments(professionalId)
+  if (!res.success) {
+    return { success: false, error: res.error, summary: getEarningsSummary(professionalId, []) }
+  }
+  return {
+    success: true,
+    summary: getEarningsSummary(professionalId, res.appointments),
   }
 }
 
@@ -793,7 +1065,26 @@ export function getPayoutSettings(professionalId) {
   }
 }
 
-export function savePayoutSettings(professionalId, payoutData) {
+export async function fetchPayoutSettings(professionalId) {
+  const res = await fetchConsultationSettings(professionalId)
+  const s = res.settings || getConsultationSettings(professionalId)
+  return {
+    success: res.success,
+    error: res.error,
+    payoutSettings: {
+      payoutSetupStatus: s.payoutSetupStatus || 'pending',
+      preferredPayoutMethod: s.preferredPayoutMethod || 'upi',
+      payoutUpiId: s.payoutUpiId || '',
+      accountHolderName: s.accountHolderName || '',
+      bankName: s.bankName || '',
+      accountNumberMasked: s.accountNumberMasked || '',
+      ifscCode: s.ifscCode || '',
+      updatedAt: s.updatedAt || null,
+    },
+  }
+}
+
+export async function savePayoutSettings(professionalId, payoutData) {
   const {
     preferredPayoutMethod,
     payoutUpiId,

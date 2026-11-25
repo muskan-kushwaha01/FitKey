@@ -32,8 +32,17 @@ export function ProfessionalProfileHeader({ professional, onEditProfile, postCou
     const license = professional?.licenseNumber || 'State Medical Council / Board Registered'
     const workplace = professional?.workplaceName || 'Private Clinical Practice'
     const location = [professional?.city, professional?.state].filter(Boolean).join(', ') || 'India'
-    const verificationStatus = professional?.verificationStatus || 'Pending Verification'
-    const isVerified = verificationStatus === 'Verified'
+    const verificationStatus = String(professional?.verificationStatus || 'Pending Verification').trim()
+    const normalizedVerificationStatus = verificationStatus.toLowerCase()
+    const isVerified = ['verified', 'verified practitioner', 'approved'].includes(normalizedVerificationStatus)
+    const isRejected = normalizedVerificationStatus === 'rejected'
+    const verificationLabel = isVerified
+        ? 'Verified Practitioner'
+        : isRejected
+            ? 'Verification Rejected'
+            : normalizedVerificationStatus === 'pending'
+                ? 'Pending Verification'
+                : verificationStatus
 
     const avgRating = ratingSummary?.avg || 0
     const totalReviews = ratingSummary?.total || 0
@@ -98,7 +107,7 @@ export function ProfessionalProfileHeader({ professional, onEditProfile, postCou
                                         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
                                             isVerified
                                                 ? 'bg-[#E4F0EA] text-[#2F7B58]'
-                                                : 'bg-[#F8E7A5]/80 text-[#8B6D25]'
+                                                : isRejected ? 'bg-rose-100 text-rose-700' : 'bg-[#F8E7A5]/80 text-[#8B6D25]'
                                         }`}
                                     >
                                         {isVerified ? (
@@ -107,7 +116,7 @@ export function ProfessionalProfileHeader({ professional, onEditProfile, postCou
                                             </>
                                         ) : (
                                             <>
-                                                <Clock size={13} /> Pending Verification
+                                                <Clock size={13} /> {verificationLabel}
                                             </>
                                         )}
                                     </span>

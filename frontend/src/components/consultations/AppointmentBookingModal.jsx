@@ -4,45 +4,31 @@ import {
     Calendar,
     Clock,
     Phone,
-    Shield,
     CheckCircle2,
     X,
-    Zap,
-    CreditCard,
-    AlertCircle,
-    User,
     ArrowRight,
     ArrowLeft,
-    Sparkles,
-    Check,
-    FileText,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
-    getAvailableSlotsForDate,
-    calculateXpDiscount,
+    getAvailableSlotsForDateRange,
     bookConsultationAppointment,
-    MAX_XP_DISCOUNT_PERCENT,
-    MAX_XP_DISCOUNT_POINTS,
 } from '../../services/user/userConsultationService.js'
-import { getConsultationSettings } from '../../services/professional/professionalConsultationService.js'
+import { useAuth } from '../../context/AuthContext.jsx'
+import { fetchUserProfile } from '../../services/userProfileService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
 
 export default function AppointmentBookingModal({ professional, isOpen, onClose, onBookingSuccess }) {
     const navigate = useNavigate()
+    const { user } = useAuth()
 
     // Steps: 1: 'slot_select', 2: 'patient_info', 3: 'payment_summary', 4: 'confirmed'
     const [step, setStep] = useState(1)
 
     // Doctor consultation settings
-    const settings = useMemo(() => {
-        if (!professional?.id) return null
-        return getConsultationSettings(professional.id)
-    }, [professional?.id])
-
-    const fee = settings?.consultationFee || 500
-    const duration = settings?.durationMinutes || 20
+    const fee = Number(professional?.consultation?.fee || 0)
+    const duration = Number(professional?.consultation?.durationMinutes || 20)
 
     // Date generation: next 14 days
     const next14Days = useMemo(() => {
@@ -67,42 +53,76 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
     }, [])
 
     const [selectedDate, setSelectedDate] = useState(() => next14Days[0]?.iso || '')
-    const [availableSlots, setAvailableSlots] = useState([])
+    const [slotsByDate, setSlotsByDate] = useState({})
+    const [slotsError, setSlotsError] = useState('')
     const [selectedSlot, setSelectedSlot] = useState(null) // { time24, time12 }
+    const [slotsLoading, setSlotsLoading] = useState(false)
 
     // Patient Form State
-    const [patientName, setPatientName] = useState('Alex Morgan')
-    const [patientPhone, setPatientPhone] = useState('+91 98765 12345')
-    const [patientAge, setPatientAge] = useState('28')
-    const [patientGender, setPatientGender] = useState('Female')
-    const [phoneConsented, setPhoneConsented] = useState(true)
+    const [patientName, setPatientName] = useState('')
+    const [patientPhone, setPatientPhone] = useState('')
+    const [patientAge, setPatientAge] = useState('')
+    const [patientGender, setPatientGender] = useState('Prefer not to say')
+    const [phoneConsented, setPhoneConsented] = useState(false)
     const [chiefComplaint, setChiefComplaint] = useState('')
-    const [bloodGroup, setBloodGroup] = useState('O+')
+    const [bloodGroup, setBloodGroup] = useState('')
     const [allergies, setAllergies] = useState('')
     const [currentMedications, setCurrentMedications] = useState('')
 
-    // XP Discount State
-    const [applyXp, setApplyXp] = useState(false)
-    const [requestedXp, setRequestedXp] = useState(50)
     const [submitting, setSubmitting] = useState(false)
     const [confirmedBooking, setConfirmedBooking] = useState(null)
 
-    // Load available slots when date or professional changes
     useEffect(() => {
-        if (!professional?.id || !selectedDate) return
-        const slots = getAvailableSlotsForDate(professional.id, selectedDate)
-        setAvailableSlots(slots)
-        // Reset selected slot if not in the new date's available slots
-        setSelectedSlot((prev) => {
-            if (prev && slots.some((s) => s.time24 === prev.time24)) return prev
-            return null
-        })
-    }, [professional?.id, selectedDate])
+        if (!isOpen) return
+        setStep(1)
+        setSelectedDate(next14Days[0]?.iso || '')
+        setSelectedSlot(null)
+        setConfirmedBooking(null)
+    }, [isOpen, professional?.id, next14Days])
 
-    // XP discount calculation
-    const xpCalc = useMemo(() => {
-        return calculateXpDiscount(fee, applyXp ? requestedXp : 0)
-    }, [fee, applyXp, requestedXp])
+    // Load the full 14-day availability window so the first open date with slots
+    // is selected automatically instead of leaving users on an empty day.
+    useEffect(() => {
+        if (!isOpen || !professional?.id || !next14Days.length) return
+        let cancelled = false
+        setSlotsError('')
+        setSlotsLoading(true)
+        getAvailableSlotsForDateRange(professional.id, next14Days[0].iso, next14Days[next14Days.length - 1].iso)
+            .then((slots) => {
+                if (cancelled) return
+                setSlotsByDate(slots)
+                const firstAvailableDate = next14Days.find((day) => slots[day.iso]?.length)?.iso
+                setSelectedDate((currentDate) => slots[currentDate]?.length ? currentDate : firstAvailableDate || next14Days[0].iso)
+                setSelectedSlot(null)
+            })
+            .catch((error) => {
+                if (!cancelled) {
+                    setSlotsByDate({})
+                    setSelectedSlot(null)
+                    setSlotsError(error?.message || 'Could not load appointment availability.')
+                    toast.error(error?.message || 'Could not load appointment availability.')
+                }
+            })
+            .finally(() => { if (!cancelled) setSlotsLoading(false) })
+        return () => { cancelled = true }
+    }, [isOpen, professional?.id, next14Days])
+
+    const availableSlots = slotsByDate[selectedDate] || []
+
+    useEffect(() => {
+        if (!isOpen || !user?.id) return
+        fetchUserProfile(user).then((result) => {
+            const data = result?.data
+            if (!result?.success || !data) return
+            setPatientName(data.personal?.fullName || '')
+            setPatientPhone(data.personal?.phone || user.phone || '')
+            setPatientAge(data.personal?.age || '')
+            setPatientGender(data.personal?.gender || 'Prefer not to say')
+            setBloodGroup(data.personal?.bloodGroup || '')
+            setAllergies((data.healthSummary?.allergies || []).map((item) => item.allergen).filter(Boolean).join(', '))
+            setCurrentMedications((data.healthSummary?.medications || []).map((item) => item.medication_name).filter(Boolean).join(', '))
+        }).catch((error) => console.error('[BookingModal] Could not prefill profile details:', error))
+    }, [isOpen, user?.id])
 
     if (!isOpen || !professional) return null
 
@@ -134,10 +154,10 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
     }
 
     // ─── Step 3: Confirm & Book Appointment ─────────────────────────────────
-    const handleConfirmBooking = () => {
+    const handleConfirmBooking = async () => {
         setSubmitting(true)
         try {
-            const res = bookConsultationAppointment({
+            const res = await bookConsultationAppointment({
                 professionalId: professional.id,
                 date: selectedDate,
                 time24: selectedSlot.time24,
@@ -154,21 +174,19 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
                     currentMedications: currentMedications ? currentMedications.split(',').map((s) => s.trim()) : [],
                     chiefComplaint,
                 },
-                xpPointsToRedeem: applyXp ? xpCalc.appliedXP : 0,
-                paymentMethod: 'UPI (FitKey Simulated Tele-Payment)',
             })
 
             if (res.success) {
                 setConfirmedBooking(res.booking)
                 setStep(4)
-                toast.success('Consultation booked successfully! 🎉')
+                toast.success('Appointment booked successfully.')
                 if (onBookingSuccess) onBookingSuccess(res.booking)
             } else {
                 toast.error(res.error || 'Failed to complete booking.')
             }
         } catch (err) {
             console.error('[BookingModal] Error:', err)
-            toast.error('An unexpected error occurred during booking.')
+            toast.error(err?.message || 'An unexpected error occurred during booking.')
         } finally {
             setSubmitting(false)
         }
@@ -251,7 +269,7 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
                                         <button
                                             key={d.iso}
                                             type="button"
-                                            onClick={() => setSelectedDate(d.iso)}
+                                            onClick={() => { setSelectedDate(d.iso); setSelectedSlot(null) }}
                                             className={`flex flex-col items-center justify-center min-w-[62px] py-2.5 px-2 rounded-2xl border text-xs transition shrink-0 ${selectedDate === d.iso
                                                 ? 'border-[#033135] bg-[#033135] !text-white shadow-xs font-bold'
                                                 : 'border-[#E8EFEB] bg-[#FAFBF9] text-[#647572] hover:bg-white'
@@ -277,11 +295,15 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
                                     </span>
                                 </div>
 
-                                {availableSlots.length === 0 ? (
+                                {slotsLoading ? (
+                                    <div className="rounded-2xl border border-dashed border-[#DCE7E3] bg-[#FAFBF9] p-8 text-center text-xs text-[#647572]">Loading live availability…</div>
+                                ) : slotsError ? (
+                                    <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center text-xs text-red-700">{slotsError}</div>
+                                ) : availableSlots.length === 0 ? (
                                     <div className="rounded-2xl border border-dashed border-[#DCE7E3] bg-[#FAFBF9] p-8 text-center space-y-1">
                                         <Clock size={24} className="mx-auto text-[#9AA6A0]" />
                                         <p className="text-xs font-bold text-[#033135]">No slots available on this date</p>
-                                        <p className="text-[11px] text-[#647572]">The practitioner is off or fully booked. Please select another date above.</p>
+                                        <p className="text-[11px] text-[#647572]">Choose another date above. Dates with open slots are selected first when available.</p>
                                     </div>
                                 ) : (
                                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-56 overflow-y-auto p-0.5">
@@ -431,78 +453,19 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
                                 </div>
                             </div>
 
-                            {/* XP Redemption Section */}
-                            <div className="rounded-2xl border border-[#E0AE3A]/50 bg-gradient-to-r from-[#F8E7A5]/25 via-white to-white p-4 space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#F8E7A5] text-[#8B6D25]">
-                                            <Zap size={14} fill="currentColor" />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-bold text-[#033135]">Apply FitKey Health XP</h4>
-                                            <p className="text-[10px] text-[#647572]">
-                                                Available balance: <strong>{xpCalc.availableXP} XP</strong> (1 XP = ₹1)
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={applyXp}
-                                            disabled={xpCalc.availableXP <= 0}
-                                            onChange={(e) => setApplyXp(e.target.checked)}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#033135]"></div>
-                                    </label>
-                                </div>
-
-                                {applyXp && xpCalc.maxEligibleXP > 0 && (
-                                    <div className="space-y-1 pt-1 border-t border-[#E8EFEB]">
-                                        <div className="flex items-center justify-between text-[11px]">
-                                            <span className="text-[#647572]">XP to Redeem:</span>
-                                            <span className="font-black text-[#033135]">{xpCalc.appliedXP} XP</span>
-                                        </div>
-                                        <input
-                                            type="range"
-                                            min="10"
-                                            max={xpCalc.maxEligibleXP}
-                                            step="10"
-                                            value={xpCalc.appliedXP}
-                                            onChange={(e) => setRequestedXp(Number(e.target.value))}
-                                            className="w-full accent-[#033135]"
-                                        />
-                                        <p className="text-[10px] text-[#2F7B58] font-semibold">
-                                            ✓ Applying ₹{xpCalc.discountAmount} rebate towards consultation fee.
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Fee Breakdown */}
                             <div className="rounded-2xl border border-[#E8EFEB] p-4 space-y-2 bg-white">
                                 <div className="flex items-center justify-between text-[#647572]">
-                                    <span>Consultation Base Fee:</span>
-                                    <span className="font-semibold text-[#033135]">₹{fee}</span>
+                                    <span>Consultation fee:</span>
+                                    <span className="font-semibold text-[#033135]">₹{fee.toLocaleString('en-IN')}</span>
                                 </div>
-
-                                {applyXp && xpCalc.discountAmount > 0 && (
-                                    <div className="flex items-center justify-between text-[#2F7B58] font-bold">
-                                        <span>FitKey XP Discount:</span>
-                                        <span>-₹{xpCalc.discountAmount}</span>
-                                    </div>
-                                )}
-
                                 <div className="flex items-center justify-between border-t border-[#E8EFEB] pt-2 text-sm font-black text-[#033135]">
-                                    <span>Final Payable Amount:</span>
-                                    <span className="text-base text-[#2F7B58]">₹{xpCalc.finalAmount}</span>
+                                    <span>Payment status:</span>
+                                    <span className="text-base text-amber-700">Pending</span>
                                 </div>
                             </div>
-
-                            <div className="rounded-xl bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-800">
-                                ℹ️ <strong>Simulated Telehealth Booking:</strong> Payment is simulated for prototype evaluation. No real bank deduction will occur.
-                            </div>
+                            <p className="rounded-xl bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-800">
+                                Your appointment is saved. Payment processing is not available yet; no payment has been taken.
+                            </p>
                         </div>
                     )}
 
@@ -517,10 +480,10 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
 
                             <div>
                                 <h3 className="text-xl font-bold text-[#033135]" style={{ fontFamily: SERIF }}>
-                                    Appointment Confirmed!
+                                    Appointment Booked
                                 </h3>
                                 <p className="text-xs text-[#647572] mt-1">
-                                    Your phone consultation has been booked and synced with the practitioner&apos;s schedule.
+                                    Your appointment has been saved to the practitioner&apos;s schedule.
                                 </p>
                             </div>
 
@@ -542,8 +505,8 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
                                     <span className="font-bold text-[#033135]">{confirmedBooking.appointment.patientPhone}</span>
                                 </div>
                                 <div className="flex items-center justify-between border-t border-[#E8EFEB] pt-2">
-                                    <span className="text-[#647572]">Amount Paid</span>
-                                    <span className="font-black text-[#2F7B58]">₹{confirmedBooking.amountPaid}</span>
+                                    <span className="text-[#647572]">Payment status</span>
+                                    <span className="font-black text-amber-700">Pending · ₹{confirmedBooking.amountDue?.toLocaleString('en-IN') || 0} due</span>
                                 </div>
                             </div>
 
@@ -594,7 +557,7 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
                                 className="flex items-center gap-1.5 rounded-xl bg-[#033135] px-5 py-2.5 text-xs font-bold !text-white hover:bg-[#324C4D] transition"
                                 style={{ color: '#ffffff' }}
                             >
-                                <span>Proceed to Payment</span>
+                                <span>Review booking</span>
                                 <ArrowRight size={13} />
                             </button>
                         </>
@@ -621,8 +584,8 @@ export default function AppointmentBookingModal({ professional, isOpen, onClose,
                                     <span>Confirming...</span>
                                 ) : (
                                     <>
-                                        <CreditCard size={14} />
-                                        <span>Confirm &amp; Pay ₹{xpCalc.finalAmount}</span>
+                                        <Calendar size={14} />
+                                        <span>Confirm booking</span>
                                     </>
                                 )}
                             </button>

@@ -2,6 +2,8 @@
 // Public feed and professional discovery logic for the user-facing Community section.
 // Only shows approved posts from onboarded professionals.
 
+import { supabase } from '../../lib/supabase.js'
+import { isUuid, fetchApprovedCommunityFeed } from '../communityService.js'
 import { getAllPosts } from './professionalContentService.js'
 import { getProfessionals } from './professionalAuthService.js'
 import { getReviewsForProfessional, getRatingSummary } from './professionalReviewService.js'
@@ -83,6 +85,75 @@ export function getPublicProfessionalProfile(professionalId) {
     posts,
     ratingSummary,
     reviews,
+  }
+}
+
+/**
+ * Async public profile loader compatible with both local/demo professionals
+ * (e.g. `prof_demo_001`) and Supabase-authenticated verified practitioner UUIDs.
+ */
+export async function getPublicProfessionalProfileAsync(professionalId, viewerUserId = null) {
+  if (!professionalId) return null
+
+  const localProfile = getPublicProfessionalProfile(professionalId)
+  if (localProfile) {
+    return localProfile
+  }
+
+  if (!isUuid(professionalId)) {
+    return null
+  }
+
+  try {
+    const { data: summary, error } = await supabase.rpc('get_public_professional_summary', {
+      p_user_id: professionalId,
+    })
+
+    if (error || !summary) {
+      return null
+    }
+
+    const allAuthorPosts = await fetchApprovedCommunityFeed(viewerUserId, { limit: 60 })
+    const posts = allAuthorPosts.filter((p) => p.authorId === professionalId)
+
+    const professional = {
+      id: summary.user_id,
+      fullName: summary.full_name || 'Verified Practitioner',
+      name: summary.full_name || 'Verified Practitioner',
+      photoUrl: summary.avatar_url || '',
+      profession: summary.profession || 'Healthcare Professional',
+      specialization: summary.specialization || 'Clinical Wellness',
+      qualification: summary.qualification || '',
+      yearsExperience: summary.experience_years ?? null,
+      bio: summary.bio || '',
+      workplaceName: summary.workplace_name || '',
+      workplaceAddress: summary.workplace_address || '',
+      city: summary.city || '',
+      state: summary.state || '',
+      clinicPhotoUrl: summary.clinic_photo_url || '',
+      consultationsEnabled: Boolean(summary.consultations_enabled),
+      durationMinutes: summary.duration_minutes || 20,
+      bufferMinutes: summary.buffer_minutes || 5,
+      timezone: summary.timezone || 'Asia/Kolkata',
+      verificationStatus: summary.verification_status || 'Verified Practitioner',
+      licenseNumber: summary.is_verified ? 'Verified Registry' : '',
+      consultationFee: summary.consultation_fee ?? null,
+    }
+
+    const [ratingSummary, reviews] = await Promise.all([
+      getRatingSummary(professionalId),
+      getReviewsForProfessional(professionalId),
+    ])
+
+    return {
+      professional,
+      posts,
+      ratingSummary,
+      reviews,
+    }
+  } catch (err) {
+    console.error('[professionalDiscoveryService] getPublicProfessionalProfileAsync error:', err)
+    return null
   }
 }
 

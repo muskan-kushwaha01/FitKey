@@ -20,6 +20,7 @@ import toast from 'react-hot-toast'
 import {
   getGoals,
   saveGoals,
+  today,
   todaySteps,
   logSteps,
   todayWaterLogs,
@@ -101,7 +102,12 @@ function Health() {
     setMetCount(getGoalsMet())
   }
 
-  useEffect(() => { refreshData() }, [])
+  useEffect(() => {
+    refreshData()
+    const handleSync = () => refreshData()
+    window.addEventListener('fitkey-sync-complete', handleSync)
+    return () => window.removeEventListener('fitkey-sync-complete', handleSync)
+  }, [])
 
   // ── derived ──────────────────────────────────────────────────────────────────
   const now = new Date()
@@ -266,7 +272,7 @@ function Health() {
 
     // 3. Common Steps Log (one consolidated summary entry for today)
     if (stepsToday > 0) {
-      const stepRec = getSteps().find((r) => r.date === new Date().toISOString().slice(0, 10))
+      const stepRec = getSteps().find((r) => r.date === today())
       entries.push({
         id: stepRec?.id || 'steps-today',
         type: 'steps',

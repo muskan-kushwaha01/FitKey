@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import {
-    Trophy, Flame, Gift, Crown,
-    Zap, CheckCircle2, Lock, Sparkles, Medal, ChevronUp, ChevronDown, Minus,
+    Trophy, Gift, Crown, History,
+    Zap, CheckCircle2, Lock, Sparkles, Medal,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -21,15 +22,12 @@ import {
     redeemReward,
 } from '../../services/rewardService'
 import { getCurrentStreak } from '../../services/healthService'
+import { useAuth } from '../../context/AuthContext'
+import { flushSyncOutbox, syncProgressWithServer } from '../../services/syncService'
+import { getTodayDateString } from '../../services/storageService'
+import { fetchUserLeaderboard } from '../../services/user/userLeaderboardService.js'
 
 const SERIF = "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif"
-
-const DEMO_LEADERBOARD_PLAYERS = [
-    { name: 'Aarav', xp: 1250, initials: 'A', streak: 12 },
-    { name: 'Priya', xp: 1120, initials: 'P', streak: 9 },
-    { name: 'Riya', xp: 870, initials: 'R', streak: 7 },
-    { name: 'Kabir', xp: 760, initials: 'K', streak: 3 },
-]
 
 const tabs = ['Missions', 'Badges', 'Leaderboard', 'Reward Store']
 
@@ -43,8 +41,10 @@ const rarityStyle = {
 const badgeFilters = ['All', 'Unlocked', 'Locked']
 
 function Rewards() {
+    const { user } = useAuth()
     const [activeTab, setActiveTab] = useState('Missions')
     const [badgeFilter, setBadgeFilter] = useState('All')
+    const [redeemingId, setRedeemingId] = useState(null)
 
     const [wallet, setWallet] = useState({
         availableXP: 0,
@@ -61,10 +61,10 @@ function Rewards() {
         challenges: [],
         summary: {
             doneCount: 0,
-            totalCount: 4,
+            totalCount: 0,
             xpEarnedToday: 0,
-            xpAvailableToday: 275,
-            bonusXP: 50,
+            xpAvailableToday: 0,
+            bonusXP: 0,
             bonusClaimed: false,
             allDone: false,
         },
@@ -82,13 +82,33 @@ function Rewards() {
     })
 
     const [storeItems, setStoreItems] = useState([])
-    const [streak, setStreak] = useState(1)
+    const [streak, setStreak] = useState(0)
     const [totalMissionsDone, setTotalMissionsDone] = useState(0)
+    const [leaderboard, setLeaderboard] = useState([])
+    const [leaderboardLoading, setLeaderboardLoading] = useState(false)
+    const [leaderboardError, setLeaderboardError] = useState('')
+
+    const loadLeaderboard = useCallback(async () => {
+        if (!user?.id) {
+            setLeaderboard([])
+            return
+        }
+        setLeaderboardLoading(true)
+        setLeaderboardError('')
+        try {
+            setLeaderboard(await fetchUserLeaderboard(50))
+        } catch (error) {
+            setLeaderboard([])
+            setLeaderboardError(error?.message || 'Could not load the leaderboard.')
+        } finally {
+            setLeaderboardLoading(false)
+        }
+    }, [user?.id])
 
     const refreshData = useCallback(() => {
-        // Evaluate daily challenges and badges against live health data
-        const evalChallenges = evaluateDailyChallenges()
-        const evalBadges = evaluateBadges()
+        // Read-only evaluation against live health data and synced server records
+        const evalChallenges = evaluateDailyChallenges({ evaluateOnly: true })
+        const evalBadges = evaluateBadges({ evaluateOnly: true })
         const available = getAvailableXP()
         const lifetime = getLifetimeXP()
         const lvlInfo = calculateLevel(lifetime)
@@ -110,48 +130,49 @@ function Rewards() {
 
     useEffect(() => {
         refreshData()
-    }, [refreshData])
+        loadLeaderboard()
+        const handleSync = () => { refreshData(); loadLeaderboard() }
+        window.addEventListener('fitkey-sync-complete', handleSync)
+        return () => window.removeEventListener('fitkey-sync-complete', handleSync)
+    }, [refreshData, loadLeaderboard])
 
-    const handleReward = (item) => {
-        const result = redeemReward(item.id)
-        if (result.success) {
-            toast.success(result.message)
-            refreshData()
-        } else {
-            toast.error(result.message)
+    useEffect(() => {
+        if (!user?.id) return
+        let cancelled = false
+        flushSyncOutbox(user.id)
+            .then(() => syncProgressWithServer(user.id, [getTodayDateString()]))
+            .then(() => {
+                if (!cancelled) refreshData()
+            })
+            .catch(() => {})
+        return () => {
+            cancelled = true
+        }
+    }, [user?.id, refreshData])
+
+    const handleReward = async (item) => {
+        if (redeemingId) return
+        setRedeemingId(item.id)
+        try {
+            const result = await redeemReward(item.id)
+            if (result.success) {
+                toast.success(result.message)
+                refreshData()
+            } else {
+                toast.error(result.message)
+            }
+        } finally {
+            setRedeemingId(null)
         }
     }
 
-    // Dynamic Leaderboard: combine demo players with live user XP
     const userXP = wallet.availableXP
-    const combinedLeaderboard = [
-        ...DEMO_LEADERBOARD_PLAYERS,
-        {
-            name: 'You',
-            xp: userXP,
-            initials: 'U',
-            current: true,
-            streak: streak || 1,
-        },
-    ].sort((a, b) => b.xp - a.xp)
-
-    const rankedLeaderboard = combinedLeaderboard.map((p, idx) => ({
-        ...p,
-        rank: idx + 1,
-        trend: idx === 0 ? 'up' : idx <= 2 ? 'up' : idx === 3 ? 'same' : 'down',
-    }))
-
-    const you = rankedLeaderboard.find((p) => p.current) || { rank: 3, xp: userXP }
-    const playerAhead = you.rank > 1 ? rankedLeaderboard[you.rank - 2] : null
-    const gapToNext = playerAhead ? Math.max(0, playerAhead.xp - you.xp) : 0
+    const rankedLeaderboard = leaderboard
+    const you = rankedLeaderboard.find((p) => p.current) || null
+    const playerAhead = you ? rankedLeaderboard.find((p) => p.rank === you.rank - 1) : null
+    const gapToNext = playerAhead && you ? Math.max(0, playerAhead.xp - you.xp) : 0
     const maxXp = Math.max(...rankedLeaderboard.map((p) => p.xp), 1)
-
-    // Podium top 3 (second place left, first place middle, third place right)
-    const podiumPlayers = [
-        rankedLeaderboard[1] || rankedLeaderboard[0],
-        rankedLeaderboard[0],
-        rankedLeaderboard[2] || rankedLeaderboard[0],
-    ]
+    const podiumPlayers = rankedLeaderboard.filter((p) => p.rank <= 3)
 
     const { summary: challengeSummary, challenges } = challengeData
     const { summary: badgeSummary, badges } = badgeData
@@ -172,22 +193,32 @@ function Rewards() {
         <div className="space-y-5 sm:space-y-7">
 
             {/* Page Heading */}
-            <section>
-                <div className="mb-1.5 flex items-center gap-2 text-xs sm:text-sm text-[#647572]">
-                    <Trophy size={16} />
-                    YOUR REWARDS ZONE
+            <section className="flex items-start justify-between gap-4">
+                <div>
+                    <div className="mb-1.5 flex items-center gap-2 text-xs sm:text-sm text-[#647572]">
+                        <Trophy size={16} />
+                        YOUR REWARDS ZONE
+                    </div>
+
+                    <h1
+                        className="text-3xl sm:text-4xl text-[#033135]"
+                        style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                    >
+                        Rewards
+                    </h1>
+
+                    <p className="mt-1.5 text-xs sm:text-sm text-[#647572]">
+                        Every healthy habit takes you one step closer.
+                    </p>
                 </div>
 
-                <h1
-                    className="text-3xl sm:text-4xl text-[#033135]"
-                    style={{ fontFamily: SERIF, letterSpacing: '-0.01em' }}
+                <Link
+                    to="/rewards/history"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#DCE7E3] bg-white px-3.5 py-2 text-xs font-semibold text-[#033135] shadow-2xs transition hover:border-[#033135]/30 hover:bg-[#E4F0EA]/60"
                 >
-                    Rewards
-                </h1>
-
-                <p className="mt-1.5 text-xs sm:text-sm text-[#647572]">
-                    Every healthy habit takes you one step closer.
-                </p>
+                    <History size={14} className="text-[#324C4D]" />
+                    <span>History</span>
+                </Link>
             </section>
 
             {/* XP wallet */}
@@ -577,11 +608,8 @@ function Rewards() {
                 <section className="space-y-3">
 
                     <div className="flex items-baseline justify-between gap-3">
-                        <h2 className="text-lg sm:text-xl text-[#033135]" style={{ fontFamily: SERIF }}>Weekly leaderboard</h2>
-                        <p className="flex items-center gap-1 text-[10px] sm:text-xs text-[#647572]">
-                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#2F7B58]" />
-                            Resets in 3 days
-                        </p>
+                        <h2 className="text-lg sm:text-xl text-[#033135]" style={{ fontFamily: SERIF }}>Member leaderboard</h2>
+                        <p className="text-[10px] sm:text-xs text-[#647572]">Ranked by available XP</p>
                     </div>
 
                     {/* Your standing */}
@@ -590,20 +618,20 @@ function Rewards() {
                         <div className="relative flex items-center gap-3 sm:gap-4">
                             <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl bg-[#033135] text-white sm:h-16 sm:w-16">
                                 <span className="text-[9px] font-semibold uppercase tracking-wider text-[#F8E7A5]">Rank</span>
-                                <span className="text-2xl font-black leading-none">#{you.rank}</span>
+                                <span className="text-2xl font-black leading-none">{you ? `#${you.rank}` : '—'}</span>
                             </div>
 
                             <div className="min-w-0 flex-1">
                                 <p className="text-sm font-extrabold text-[#033135] sm:text-base">
-                                    {you.rank === 1 ? "You're leading the board!" : you.rank <= 3 ? "You're on the podium!" : "Keep climbing!"}
+                                    {you ? (you.rank === 1 ? "You're leading the board!" : you.rank <= 3 ? "You're on the podium!" : "Keep climbing!") : 'Your profile is not listed publicly'}
                                 </p>
                                 <p className="mt-0.5 text-[11px] text-[#755347] sm:text-xs">
-                                    {playerAhead ? (
+                                    {you && playerAhead ? (
                                         <>
                                             Only <span className="font-black text-[#033135]">{gapToNext} XP</span> to overtake {playerAhead.name}
                                         </>
                                     ) : (
-                                        'Top rank! Defend your lead by completing missions.'
+                                        you ? 'You currently hold the top available rank.' : 'Enable leaderboard visibility in your profile to appear here.'
                                     )}
                                 </p>
                                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/60">
@@ -625,7 +653,7 @@ function Rewards() {
                     </div>
 
                     {/* Podium */}
-                    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#033135] to-[#324C4D] px-3 pt-5 text-white sm:rounded-3xl sm:px-6 sm:pt-6">
+                    {podiumPlayers.length > 0 && <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#033135] to-[#324C4D] px-3 pt-5 text-white sm:rounded-3xl sm:px-6 sm:pt-6">
                         <div className="absolute -right-12 -top-12 h-44 w-44 rounded-full border-[22px] border-white/5" />
                         <div className="absolute -left-10 bottom-10 h-28 w-28 rounded-full border-[14px] border-white/5" />
 
@@ -633,16 +661,16 @@ function Rewards() {
                             <Trophy size={18} className="shrink-0 text-[#F8E7A5]" />
                             <div>
                                 <h3 className="text-base font-black leading-tight">The XP champions</h3>
-                                <p className="text-[11px] text-[#C4D7D4]">This week's top 3 players</p>
+                                <p className="text-[11px] text-[#C4D7D4]">Top registered members</p>
                             </div>
                         </div>
 
                         <div className="relative mt-6 flex items-end justify-center gap-2 sm:gap-4">
-                            {podiumPlayers.map((p) => {
+                            {[...podiumPlayers].sort((a, b) => (a.rank === 1 ? -1 : b.rank === 1 ? 1 : a.rank - b.rank)).map((p) => {
                                 const first = p.rank === 1
                                 const bg = first ? '#F8E7A5' : p.rank === 2 ? '#DCD6F7' : '#FFD9C7'
                                 return (
-                                    <div key={p.name} className="min-w-0 max-w-[110px] flex-1 text-center">
+                                    <div key={p.id} className="min-w-0 max-w-[110px] flex-1 text-center">
                                         {first && <Crown size={22} className="mx-auto mb-1 text-[#F8E7A5]" fill="currentColor" />}
 
                                         <div className="relative mx-auto w-fit">
@@ -674,21 +702,21 @@ function Rewards() {
                                 )
                             })}
                         </div>
-                    </div>
+                    </div>}
 
                     {/* Full ranking */}
                     <div className="rounded-2xl border border-[#E8EFEB] bg-white p-2 sm:rounded-3xl sm:p-4">
                         <div className="mb-1 flex items-center justify-between px-2 pt-1">
                             <h3 className="text-sm font-extrabold text-[#033135]">Full ranking</h3>
-                            <span className="text-[11px] text-[#647572]">Top {rankedLeaderboard.length} this week</span>
+                            <span className="text-[11px] text-[#647572]">{rankedLeaderboard.length} members</span>
                         </div>
 
                         <div className="space-y-1.5">
-                            {rankedLeaderboard.map((p) => {
+                            {leaderboardLoading ? <p className="p-6 text-center text-xs text-[#647572]">Loading registered members…</p> : leaderboardError ? <p className="p-6 text-center text-xs text-rose-700">{leaderboardError}</p> : rankedLeaderboard.length === 0 ? <p className="p-6 text-center text-xs text-[#647572]">No members have opted into the leaderboard yet.</p> : rankedLeaderboard.map((p) => {
                                 const rankBg = p.rank === 1 ? 'bg-[#F8E7A5]' : p.rank === 2 ? 'bg-[#DCD6F7]' : p.rank === 3 ? 'bg-[#FFD9C7]' : 'bg-[#F0F3F0]'
                                 return (
                                     <div
-                                        key={p.name}
+                                        key={p.id}
                                         className={`relative flex min-w-0 items-center gap-2.5 rounded-2xl px-2.5 py-3 transition sm:gap-3 sm:px-3 ${p.current
                                             ? 'bg-[#F8E7A5]/50 ring-2 ring-[#A47A27]/60 shadow-md'
                                             : 'hover:bg-[#FAFBFA]'
@@ -714,10 +742,6 @@ function Rewards() {
                                                         YOU
                                                     </span>
                                                 )}
-                                                <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#A45E45] sm:text-[11px]">
-                                                    <Flame size={11} fill="#F97316" className="text-[#F97316]" />
-                                                    {p.streak}
-                                                </span>
                                             </div>
                                             <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#F0F3F0]">
                                                 <div
@@ -740,10 +764,7 @@ function Rewards() {
                                                         : 'text-[#9AA6A0]'
                                                     }`}
                                             >
-                                                {p.trend === 'up' && <ChevronUp size={13} />}
-                                                {p.trend === 'down' && <ChevronDown size={13} />}
-                                                {p.trend === 'same' && <Minus size={12} />}
-                                                {p.trend === 'up' ? 'Rising' : p.trend === 'down' ? 'Falling' : 'Steady'}
+                                                Available XP
                                             </p>
                                         </div>
                                     </div>
@@ -752,7 +773,7 @@ function Rewards() {
                         </div>
 
                         <p className="mt-3 px-2 text-[11px] text-[#647572]">
-                            Complete today's missions to climb higher. Demo profiles shown.
+                            Rankings include registered members who have enabled public leaderboard visibility.
                         </p>
                     </div>
                 </section>
@@ -770,7 +791,12 @@ function Rewards() {
                     </div>
 
                     <div className="space-y-3">
-                        {storeItems.map((item) => {
+                        {storeItems.length === 0 ? (
+                            <div className="rounded-3xl border border-dashed border-[#C4D7D4] bg-white p-10 text-center">
+                                <p className="text-sm font-semibold text-[#033135]">No active rewards are available</p>
+                                <p className="mt-1 text-xs text-[#647572]">XP, missions, and badges remain available. Reward items will appear here when a real catalog is connected.</p>
+                            </div>
+                        ) : storeItems.map((item) => {
                             const Icon = item.icon
                             const { isClaimed, canAfford, progressPercent, xpNeeded } = item
 
@@ -814,16 +840,22 @@ function Rewards() {
                                                 {item.points}
                                             </p>
                                             <button
-                                                disabled={!canAfford || isClaimed}
+                                                disabled={!canAfford || isClaimed || redeemingId === item.id}
                                                 onClick={() => handleReward(item)}
                                                 className={`px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold whitespace-nowrap transition ${isClaimed
                                                     ? 'bg-[#E4F0EA] text-[#324C4D]'
                                                     : canAfford
-                                                        ? 'bg-[#033135] text-white hover:bg-[#324C4D]'
+                                                        ? 'bg-[#033135] text-white hover:bg-[#324C4D] disabled:opacity-60'
                                                         : 'bg-[#EFF2EF] text-[#9AA6A0]'
                                                     }`}
                                             >
-                                                {isClaimed ? 'Claimed' : canAfford ? 'Unlock reward' : 'Not enough XP'}
+                                                {isClaimed
+                                                    ? 'Claimed'
+                                                    : redeemingId === item.id
+                                                        ? 'Unlocking...'
+                                                        : canAfford
+                                                            ? 'Unlock reward'
+                                                            : 'Not enough XP'}
                                             </button>
                                         </div>
                                     </div>
@@ -841,7 +873,7 @@ function Rewards() {
             </div>
 
             <p className="text-center text-[10px] text-[#647572]">
-                FitKey prototype · XP, rankings and rewards are demonstration data.
+                Your XP, progress, and redemptions are synced to your FitKey account.
             </p>
         </div>
     )
